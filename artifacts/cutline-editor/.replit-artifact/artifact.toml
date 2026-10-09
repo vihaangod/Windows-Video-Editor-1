@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Cutline Video Editor"
+description = "A free, local-first video editing workspace for Windows creators. Import media, arrange and trim multi-track clips, preview edits, save projects locally, and export without subscriptions or watermarks."
+version = "1.0.0"
+id = "artifacts/cutline-editor"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20833
+
+[services.development]
+run = "pnpm --filter @workspace/cutline-editor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/cutline-editor", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/cutline-editor/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20833"
+BASE_PATH = "/"
