@@ -1,5 +1,5 @@
 import './inspector-panel.css';
-import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextOverlay } from '@/lib/composition';
+import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextBackgroundStyle, type TextOverlay } from '@/lib/composition';
 
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
   transform?: Partial<ClipTransform>;
@@ -81,6 +81,7 @@ export default function InspectorPanel({
   const fadeIn = clip.fadeIn ?? 0;
   const fadeOut = clip.fadeOut ?? 0;
   const isText = Boolean(clip.text);
+  const backgroundStyle: TextBackgroundStyle = clip.text?.backgroundStyle || {};
 
   const updateTime = (key: 'timelineStart' | 'sourceIn' | 'sourceOut', raw: string) => {
     if (raw === '') return;
@@ -151,6 +152,25 @@ export default function InspectorPanel({
         disabled={disabled}
         data-testid={testId}
       />
+    </label>
+  );
+  const updateBackground = (patch: Partial<TextBackgroundStyle>) => {
+    onChange({ text: { backgroundStyle: { ...backgroundStyle, ...patch } } });
+  };
+  const effectToggle = (
+    label: string,
+    key: 'brightness' | 'contrast' | 'saturation' | 'blur',
+  ) => (
+    <label className="cutline-inspector__effect-toggle" htmlFor={`check-effect-${key}-${clip.id}`}>
+      <input
+        id={`check-effect-${key}-${clip.id}`}
+        type="checkbox"
+        checked={effects.enabled?.[key] !== false}
+        disabled={disabled}
+        onChange={(event) => onChange({ effects: { enabled: { [key]: event.currentTarget.checked } } })}
+        aria-label={`${label} enabled`}
+      />
+      <span>On</span>
     </label>
   );
 
@@ -300,9 +320,70 @@ export default function InspectorPanel({
           </label>
         </div>
         <label className="cutline-inspector__field cutline-inspector__field--spaced" htmlFor={`input-title-background-${clip.id}`}>
-          <span className="cutline-inspector__field-label">Text background (CSS color)</span>
+          <span className="cutline-inspector__field-label">Text background color (CSS color)</span>
           <input id={`input-title-background-${clip.id}`} className="cutline-inspector__number" type="text" value={clip.text.backgroundColor} disabled={disabled} data-testid="input-title-background" onChange={(event) => onChange({ text: { backgroundColor: event.currentTarget.value } })} />
         </label>
+        <label className="cutline-inspector__check cutline-inspector__check--spaced" htmlFor={`check-title-background-${clip.id}`}>
+          <input
+            id={`check-title-background-${clip.id}`}
+            type="checkbox"
+            checked={backgroundStyle.enabled ?? Boolean(clip.text.backgroundColor)}
+            disabled={disabled}
+            data-testid="check-title-background"
+            onChange={(event) => {
+              if (event.currentTarget.checked && !clip.text?.backgroundColor) {
+                onChange({ text: { backgroundColor: 'rgba(16,18,22,.82)', backgroundStyle: { ...backgroundStyle, enabled: true } } });
+              } else updateBackground({ enabled: event.currentTarget.checked });
+            }}
+          />
+          <span>Show background</span>
+        </label>
+        {rangeControl('Background opacity', 'slider-title-background-opacity', (backgroundStyle.opacity ?? 1) * 100, 0, 100, 1, (value) => updateBackground({ opacity: value / 100 }), '%')}
+        <div className="cutline-inspector__fields">
+          {rangeControl('Padding', 'slider-title-background-padding', backgroundStyle.padding ?? 16, 0, 120, 1, (value) => updateBackground({ padding: value }), 'px')}
+          {rangeControl('Corner radius', 'slider-title-background-radius', backgroundStyle.radius ?? 0, 0, 100, 1, (value) => updateBackground({ radius: value }), 'px')}
+        </div>
+        <div className="cutline-inspector__fields">
+          <label className="cutline-inspector__field" htmlFor={`input-title-background-width-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background width (0 = auto)</span>
+            <input id={`input-title-background-width-${clip.id}`} className="cutline-inspector__number" type="number" min="0" max="4000" value={backgroundStyle.width ?? 0} disabled={disabled} data-testid="input-title-background-width" onChange={(event) => updateBackground({ width: Number(event.currentTarget.value) > 0 ? clamp(Number(event.currentTarget.value), 1, 4000) : undefined })} />
+          </label>
+          <label className="cutline-inspector__field" htmlFor={`input-title-background-height-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background height (0 = auto)</span>
+            <input id={`input-title-background-height-${clip.id}`} className="cutline-inspector__number" type="number" min="0" max="4000" value={backgroundStyle.height ?? 0} disabled={disabled} data-testid="input-title-background-height" onChange={(event) => updateBackground({ height: Number(event.currentTarget.value) > 0 ? clamp(Number(event.currentTarget.value), 1, 4000) : undefined })} />
+          </label>
+        </div>
+        <div className="cutline-inspector__fields">
+          <label className="cutline-inspector__field" htmlFor={`select-title-background-align-x-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background horizontal anchor</span>
+            <select id={`select-title-background-align-x-${clip.id}`} className="cutline-inspector__select" value={backgroundStyle.alignX ?? clip.text.align} disabled={disabled} data-testid="select-title-background-align-x" onChange={(event) => updateBackground({ alignX: event.currentTarget.value as TextBackgroundStyle['alignX'] })}>
+              <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+            </select>
+          </label>
+          <label className="cutline-inspector__field" htmlFor={`select-title-background-align-y-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background vertical anchor</span>
+            <select id={`select-title-background-align-y-${clip.id}`} className="cutline-inspector__select" value={backgroundStyle.alignY ?? 'center'} disabled={disabled} data-testid="select-title-background-align-y" onChange={(event) => updateBackground({ alignY: event.currentTarget.value as TextBackgroundStyle['alignY'] })}>
+              <option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option>
+            </select>
+          </label>
+        </div>
+        <div className="cutline-inspector__fields">
+          <label className="cutline-inspector__field" htmlFor={`input-title-background-offset-x-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background offset X</span>
+            <input id={`input-title-background-offset-x-${clip.id}`} className="cutline-inspector__number" type="number" value={backgroundStyle.offsetX ?? 0} disabled={disabled} data-testid="input-title-background-offset-x" onChange={(event) => updateBackground({ offsetX: Number(event.currentTarget.value) || 0 })} />
+          </label>
+          <label className="cutline-inspector__field" htmlFor={`input-title-background-offset-y-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Background offset Y</span>
+            <input id={`input-title-background-offset-y-${clip.id}`} className="cutline-inspector__number" type="number" value={backgroundStyle.offsetY ?? 0} disabled={disabled} data-testid="input-title-background-offset-y" onChange={(event) => updateBackground({ offsetY: Number(event.currentTarget.value) || 0 })} />
+          </label>
+        </div>
+        <div className="cutline-inspector__fields">
+          <label className="cutline-inspector__field" htmlFor={`input-title-background-border-${clip.id}`}>
+            <span className="cutline-inspector__field-label">Border color</span>
+            <input id={`input-title-background-border-${clip.id}`} className="cutline-inspector__number" type="text" value={backgroundStyle.borderColor ?? 'transparent'} disabled={disabled} data-testid="input-title-background-border" onChange={(event) => updateBackground({ borderColor: event.currentTarget.value })} />
+          </label>
+          {rangeControl('Border width', 'slider-title-background-border-width', backgroundStyle.borderWidth ?? 0, 0, 20, 1, (value) => updateBackground({ borderWidth: value }), 'px')}
+        </div>
         <div className="cutline-inspector__fields">
           <label className="cutline-inspector__field" htmlFor={`input-title-outline-${clip.id}`}>
             <span className="cutline-inspector__field-label">Outline color</span>
@@ -321,11 +402,14 @@ export default function InspectorPanel({
       </section>}
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-effects-heading">
-        <div className="cutline-inspector__section-title"><h2 id="inspector-effects-heading">Effects</h2></div>
-        {rangeControl('Brightness', 'slider-effect-brightness', effects.brightness, 0, 2, .05, (value) => onChange({ effects: { brightness: value } }))}
-        {rangeControl('Contrast', 'slider-effect-contrast', effects.contrast, 0, 2, .05, (value) => onChange({ effects: { contrast: value } }))}
-        {rangeControl('Saturation', 'slider-effect-saturation', effects.saturation, 0, 2, .05, (value) => onChange({ effects: { saturation: value } }))}
-        {rangeControl('Blur', 'slider-effect-blur', effects.blur, 0, 20, .25, (value) => onChange({ effects: { blur: value } }), 'px')}
+        <div className="cutline-inspector__section-title">
+          <h2 id="inspector-effects-heading">Effects</h2>
+          <button type="button" className="cutline-inspector__reset-effects" disabled={disabled} onClick={() => onChange({ effects: { ...DEFAULT_EFFECTS } })} data-testid="button-reset-effects">Reset</button>
+        </div>
+        <div className="cutline-inspector__effect-control">{effectToggle('Brightness', 'brightness')}{rangeControl('Brightness', 'slider-effect-brightness', effects.brightness, 0, 2, .05, (value) => onChange({ effects: { brightness: value } }))}</div>
+        <div className="cutline-inspector__effect-control">{effectToggle('Contrast', 'contrast')}{rangeControl('Contrast', 'slider-effect-contrast', effects.contrast, 0, 2, .05, (value) => onChange({ effects: { contrast: value } }))}</div>
+        <div className="cutline-inspector__effect-control">{effectToggle('Saturation', 'saturation')}{rangeControl('Saturation', 'slider-effect-saturation', effects.saturation, 0, 2, .05, (value) => onChange({ effects: { saturation: value } }))}</div>
+        <div className="cutline-inspector__effect-control">{effectToggle('Blur', 'blur')}{rangeControl('Blur', 'slider-effect-blur', effects.blur, 0, 20, .25, (value) => onChange({ effects: { blur: value } }), 'px')}</div>
       </section>
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-fade-heading">

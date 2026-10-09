@@ -2,11 +2,15 @@ import { useMemo, useState } from 'react';
 import { Search, Sparkles, WandSparkles } from 'lucide-react';
 import type { ClipEffects } from '@/lib/composition';
 
+export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+
 type Props = {
   workspace: 'effects' | 'transitions' | 'filters';
   disabled?: boolean;
   onEffects: (effects: Partial<ClipEffects>) => void;
-  onFade: (fadeIn: number, fadeOut: number) => void;
+  onTransition: (type: TransitionPresetType, duration: number) => void;
+  onRemoveTransition: () => void;
+  hasSelectedTransition?: boolean;
 };
 
 const EFFECTS: Array<{ name: string; description: string; values: Partial<ClipEffects>; sample: string }> = [
@@ -23,14 +27,24 @@ const FILTERS: Array<{ name: string; description: string; values: Partial<ClipEf
   { name: 'Soft focus', description: 'Apply a light, adjustable blur.', values: { brightness: 1.03, contrast: .97, saturation: 1, blur: 1.6 }, sample: 'soft' },
 ];
 
-const TRANSITIONS = [
-  { name: 'Fade in', description: 'Fade this clip up from the canvas background.', in: .5, out: 0, sample: 'fade-in' },
-  { name: 'Fade out', description: 'Fade this clip down to the canvas background.', in: 0, out: .5, sample: 'fade-out' },
-  { name: 'Fade both ends', description: 'Apply a fade at the beginning and end.', in: .45, out: .45, sample: 'fade-both' },
+const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPresetType; sample: string }> = [
+  { name: 'Cross dissolve', description: 'Blend adjacent clips with a real two-source dissolve.', type: 'cross-dissolve', sample: 'fade-both' },
+  { name: 'Fade through black', description: 'Fade out, pass through black, then fade in.', type: 'fade-through-black', sample: 'fade-out' },
+  { name: 'Wipe', description: 'Reveal the next adjacent clip from left to right.', type: 'wipe', sample: 'fade-in' },
+  { name: 'Slide', description: 'Slide the incoming clip in from the right.', type: 'slide', sample: 'fade-in' },
+  { name: 'Zoom', description: 'Dissolve while the incoming clip scales into place.', type: 'zoom', sample: 'soft' },
 ];
 
-export default function EffectWorkspace({ workspace, disabled = false, onEffects, onFade }: Props) {
+export default function EffectWorkspace({
+  workspace,
+  disabled = false,
+  onEffects,
+  onTransition,
+  onRemoveTransition,
+  hasSelectedTransition = false,
+}: Props) {
   const [query, setQuery] = useState('');
+  const [duration, setDuration] = useState(.6);
   const presets = workspace === 'effects' ? EFFECTS : workspace === 'filters' ? FILTERS : TRANSITIONS;
   const visible = useMemo(
     () => presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())),
@@ -40,7 +54,7 @@ export default function EffectWorkspace({ workspace, disabled = false, onEffects
   const apply = (preset: typeof presets[number]) => {
     if (workspace === 'transitions') {
       const transition = preset as typeof TRANSITIONS[number];
-      onFade(transition.in, transition.out);
+      onTransition(transition.type, duration);
     } else {
       onEffects((preset as typeof EFFECTS[number]).values);
     }
@@ -63,9 +77,14 @@ export default function EffectWorkspace({ workspace, disabled = false, onEffects
       </header>
       <p className="cutline-effect-workspace__note">
         {workspace === 'transitions'
-          ? 'Fades apply to the selected clip and are included in playback and export.'
+          ? 'Select a video clip followed by another clip on the same track. The transition appears in preview and export.'
           : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
       </p>
+      {workspace === 'transitions' && <div className="cutline-transition-controls">
+        <label htmlFor="input-transition-duration">Duration <strong>{duration.toFixed(1)}s</strong></label>
+        <input id="input-transition-duration" type="range" min=".2" max="2" step=".1" value={duration} onChange={(event) => setDuration(Number(event.currentTarget.value))} aria-label="Transition duration" />
+        <button type="button" className="btn flat" disabled={!hasSelectedTransition} onClick={onRemoveTransition} data-testid="button-remove-transition">Remove transition</button>
+      </div>}
       <div className="cutline-effect-workspace__list">
         {visible.map((preset) => (
           <button
@@ -74,7 +93,7 @@ export default function EffectWorkspace({ workspace, disabled = false, onEffects
             className="cutline-effect-card"
             disabled={disabled}
             onClick={() => apply(preset)}
-            title={disabled ? 'Select an unlocked timeline clip first' : `Apply ${preset.name}`}
+            title={disabled ? 'Select an unlocked video clip with an adjacent clip on the same track' : `Apply ${preset.name}`}
           >
             <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample}`} aria-hidden="true">
               <span />
