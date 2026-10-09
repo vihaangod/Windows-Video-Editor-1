@@ -1,0 +1,215 @@
+# Cutline Video Editor — Major Editing UI Upgrade + Bug Fixes
+
+You are working on my existing Cutline video editor project. Do NOT rebuild the application from scratch or destroy existing working features. Inspect the existing codebase first, identify the video preview, media import, timeline, and clip inspector implementations, and then improve them.
+
+My target is a professional desktop video editor inspired by Adobe Premiere Pro and CapCut, with a dark UI, yellow accent color, and real working editing features.
+
+## 1. CRITICAL BUG: Uploaded Video Is Not Displayed at Full Height
+
+Currently, when I import a video, the preview shows the video with incorrect sizing or cropping instead of displaying the complete video frame.
+
+Fix this properly:
+
+* Display the entire original video frame without cropping, stretching, or cutting off any edges.
+* Preserve the original aspect ratio for 16:9, 9:16, 1:1, 4:3, and other aspect ratios.
+* Calculate preview dimensions dynamically using the video's actual metadata.
+* Use `object-fit: contain` or the equivalent rendering approach.
+* The video must fit inside the available preview canvas, with letterboxing when necessary.
+* Do not stretch the video to fill the canvas.
+* Handle window resizing and different screen resolutions correctly.
+* Do not confuse the project canvas resolution with the source video's resolution.
+* Make sure the actual exported video also preserves the correct framing.
+* Test with landscape gameplay recordings, portrait videos, and square videos.
+
+The preview must show the complete video, not merely a portion of it.
+
+## 2. Transform Controls
+
+Add a proper Transform section to the Clip Inspector when a video clip is selected:
+
+* Position X and Y
+* Scale
+* Separate horizontal and vertical scaling only if needed
+* Rotation
+* Anchor point
+* Fit to canvas
+* Fill canvas
+* Reset transform
+
+Changes must update the preview immediately and must also affect the final export. Fit to canvas must never crop the source video.
+
+## 3. Proper Multi-Track Timeline
+
+The current timeline only has one video clip and one audio track. Turn it into a genuine multi-track editing timeline.
+
+Requirements:
+
+* Multiple video tracks: Video 1, Video 2, Video 3, and additional tracks as needed.
+* Multiple audio tracks.
+* Add as many clips as required.
+* Drag clips from the Media Bin directly onto any suitable track.
+* Drag clips left and right to change their timing.
+* Resize the left and right edges to trim clips.
+* Split a clip at the playhead.
+* Delete, duplicate, copy, paste, and reorder clips.
+* Move clips between tracks.
+* Support overlapping clips on different video tracks.
+* Support independent audio and video clips.
+* Add track visibility, mute, lock, and delete controls.
+* Add timeline zoom in/out and horizontal scrolling.
+* Show an accurate time ruler and playhead.
+* Automatically update the total timeline duration.
+* Support selecting multiple clips where practical.
+
+IMPORTANT: These must be real timeline operations that modify project data, not decorative controls.
+
+## 4. Add a Dedicated Text and Titles Panel
+
+Create a proper Titles/Text workspace accessible from the left sidebar.
+
+It must contain:
+
+* Add Text
+* Add Heading
+* Add Subtitle
+* Add Lower Third
+* Add Title Card
+* Text templates with visual previews
+* Animated title templates
+* Editable font family, font size, weight, color, alignment, spacing, outline, shadow, opacity, and position.
+* Text background and text box controls.
+* Fade-in and fade-out animations.
+* Text duration controls on the timeline.
+
+Show actual thumbnail previews of the title designs rather than a plain list of text buttons.
+
+Clicking a title template must create a real editable title clip on a text/overlay track. Double-clicking a title clip should open its text editor.
+
+Text must render in the video preview and appear in the final exported video.
+
+Include gaming-oriented title presets for Minecraft clips, highlight intros, subtitles, kill counters, and social-media captions.
+
+## 5. Effects, Transitions, and Filters
+
+Create dedicated Effects and Transitions panels.
+
+Include visual previews for:
+
+* Fade in/out
+* Cross dissolve
+* Zoom in/out
+* Blur
+* Sharpen
+* Brightness and contrast
+* Saturation
+* Color grading
+* Vignette
+* Speed changes
+* Basic gaming montage effects
+
+Transitions should be applicable between clips. Effects should be adjustable in the Clip Inspector.
+
+Do not display an effect as available unless it actually works in the preview and export pipeline.
+
+## 6. Improve the Left Sidebar
+
+Replace the current minimal sidebar navigation with proper editing workspaces:
+
+* Media
+* Audio
+* Text
+* Stickers/Overlays
+* Effects
+* Transitions
+* Filters
+* Templates
+
+Each workspace should have a clean, consistent design with searchable assets, thumbnail previews, and a clear Add or Apply action.
+
+The Media Bin must support importing multiple files, thumbnails, file details, search, and drag-and-drop.
+
+## 7. Better Clip Inspector
+
+When a clip is selected, display appropriate settings for its type.
+
+For video:
+
+* Duration
+* Start time
+* Source in/out points
+* Transform controls
+* Speed
+* Opacity
+* Volume
+* Effects
+
+For text:
+
+* Text content
+* Font and styling
+* Position
+* Animation
+* Duration
+
+For audio:
+
+* Volume
+* Fade in/out
+* Start/end trimming
+* Playback speed
+
+Changes must be reflected in the preview immediately.
+
+## 8. Professional Layout
+
+Preserve Cutline's existing dark charcoal theme and yellow accent color.
+
+Improve the layout with:
+
+* Left asset library
+* Large central preview
+* Right contextual inspector
+* Resizable panels
+* A larger, more capable timeline
+* Consistent vector icons
+* Tooltips and keyboard shortcuts
+* Clear selected, hovered, and disabled states
+
+Keep the interface professional, compact, and usable on a 1366×768 display. Avoid excessive empty space.
+
+## 9. Functional Editing Engine
+
+Inspect the existing architecture before choosing the implementation.
+
+Use the current framework and media pipeline wherever possible. If FFmpeg is already integrated, reuse it for rendering and exporting. Otherwise, select a compatible solution rather than adding unnecessary dependencies.
+
+Create a proper project data model for:
+
+* Media assets
+* Timeline tracks
+* Clip positions and durations
+* Source in/out points
+* Transform properties
+* Text overlays
+* Effects and transitions
+* Audio settings
+
+The preview must reflect the timeline at the current playhead position. The export must render the same arrangement, including multiple tracks, titles, transitions, effects, and audio.
+
+Do not implement fake buttons, placeholder editing actions, or controls that only change their own appearance.
+
+## 10. Implementation Order
+
+Work in this order:
+
+1. Inspect the code and fix the full-frame video preview bug.
+2. Implement a reliable multi-track timeline with clip manipulation.
+3. Add functional text clips and title templates.
+4. Implement transform controls and accurate preview rendering.
+5. Add audio editing, effects, and transitions.
+6. Connect every feature to the export pipeline.
+7. Test the complete editing workflow and fix regressions.
+
+Before finishing, test importing a video, adding multiple clips, splitting and trimming clips, adding text over video, changing scale and position, saving/reopening the project, and exporting the result.
+
+Do not just describe the implementation. Modify the existing source code, run the application/build checks, and fix errors. Report which features genuinely work and which remain incomplete.

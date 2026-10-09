@@ -78,6 +78,12 @@
   border-color: rgba(162, 121, 196, .2);
 }
 
+.cutline-inspector__type--text {
+  color: #f0c66d;
+  background: rgba(240, 198, 109, .1);
+  border-color: rgba(240, 198, 109, .2);
+}
+
 .cutline-inspector__identity-copy {
   display: flex;
   flex-direction: column;
@@ -206,6 +212,72 @@
 .cutline-inspector__input-wrap input[type=number] {
   appearance: textfield;
 }
+
+.cutline-inspector__number,
+.cutline-inspector__select,
+.cutline-inspector__textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding: 0 8px;
+  border: 1px solid rgba(218, 224, 235, .08);
+  border-radius: 4px;
+  outline: 0;
+  color: #e4e7ec;
+  background: var(--inspector-raised);
+  font: 11px var(--app-font-mono, Consolas, monospace);
+}
+
+.cutline-inspector__textarea {
+  min-height: 68px;
+  padding: 7px 8px;
+  resize: vertical;
+  font-family: var(--app-font-sans, 'Segoe UI', Tahoma, sans-serif);
+}
+
+.cutline-inspector__number:focus,
+.cutline-inspector__select:focus,
+.cutline-inspector__textarea:focus {
+  border-color: rgba(233, 173, 78, .62);
+}
+
+.cutline-inspector__color {
+  width: 100%;
+  height: 31px;
+  padding: 3px;
+  border: 1px solid rgba(218, 224, 235, .08);
+  border-radius: 4px;
+  background: var(--inspector-raised);
+}
+
+.cutline-inspector__field--spaced { margin-top: 10px; }
+.cutline-inspector__anchor-title { margin-top: 14px; }
+.cutline-inspector__actions { display: flex; gap: 6px; margin-top: 12px; }
+.cutline-inspector__actions button,
+.cutline-inspector__reset {
+  min-height: 29px;
+  padding: 0 8px;
+  color: #d6dbe1;
+  background: var(--inspector-raised);
+  border: 1px solid var(--inspector-line);
+  border-radius: 4px;
+  font-size: 10px;
+}
+.cutline-inspector__actions button:hover:not(:disabled),
+.cutline-inspector__reset:hover:not(:disabled) {
+  color: var(--inspector-amber);
+  border-color: rgba(233, 173, 78, .45);
+}
+.cutline-inspector__reset { width: 100%; margin-top: 7px; }
+.cutline-inspector__check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  color: #a0a6b0;
+  font-size: 10px;
+}
+.cutline-inspector__check input { accent-color: var(--inspector-amber); }
 
 .cutline-inspector__unit {
   flex: 0 0 auto;
