@@ -1,0 +1,511 @@
+# CUTLINE — COMPLETE PROFESSIONAL VIDEO EDITOR MASTER PROMPT
+
+You are continuing development of my existing Cutline video editing application. I accidentally stopped the previous agent, so you MUST first inspect the current codebase and determine exactly how much work has already been completed.
+
+This is a continuation task, NOT a fresh project.
+
+## PHASE 0 — INSPECT EXISTING WORK BEFORE CHANGING ANYTHING
+
+Before modifying any code:
+
+1. Inspect the complete project structure and current implementation.
+2. Check the existing components, source files, dependencies, media pipeline, timeline, preview player, project storage, and export functionality.
+3. Identify what was already implemented by the previous agent.
+4. Identify incomplete features, bugs, unfinished components, and any changes that may have been interrupted.
+5. Check the current build status and run the application if possible.
+6. Preserve all working functionality and existing user data.
+7. Do not overwrite files or rebuild existing components unnecessarily.
+8. Do not assume a feature is incomplete merely because it is not visible in one screenshot. Verify the source code and test it.
+9. Create a concise internal implementation checklist based on the actual current state.
+
+After inspection, continue directly from the current implementation. Fix broken or incomplete work before starting unrelated features.
+
+Do not stop after writing a report or proposing a plan. Make the actual code changes.
+
+# 1. PRODUCT VISION
+
+Build Cutline into a professional desktop-style video editor that runs in the existing project environment.
+
+The visual quality and editing experience should be inspired by Adobe Premiere Pro and CapCut, while maintaining Cutline's own identity.
+
+The application must have:
+
+* A modern, professional dark interface.
+* Charcoal backgrounds with yellow accents.
+* Proper SVG/vector icons, never emoji-based toolbar icons.
+* A powerful multi-track timeline.
+* A large video preview.
+* Dedicated Media, Audio, Text, Effects, Transitions, Filters and Templates workspaces.
+* A contextual inspector.
+* A reliable project system and export pipeline.
+
+The application must offer useful editing functionality without requiring a paid subscription, forced account, watermark, or paid API for basic editing.
+
+Keep processing local where practical and preserve the current application's architecture.
+
+# 2. CRITICAL BUG — FULL VIDEO FRAME NOT VISIBLE
+
+Currently, an imported Minecraft gameplay recording appears incorrectly sized in the video preview. The entire source frame must be visible.
+
+Fix the actual underlying rendering problem.
+
+Requirements:
+
+* Preserve the source video's original aspect ratio.
+* Display the complete frame without accidentally cropping any edges.
+* Never stretch the video.
+* Support landscape, portrait, square, and other aspect ratios.
+* Calculate dimensions using actual video metadata.
+* Fit the video inside the preview area with letterboxing when necessary.
+* Separate project canvas resolution from source resolution.
+* Handle resizing and different display resolutions.
+* Implement Fit to Canvas, Fill Canvas, and Reset Transform.
+* Ensure transform settings work in both preview and export.
+
+The default Fit to Canvas option must show the complete video frame. Fill Canvas may intentionally crop content to fill the selected canvas.
+
+Test with actual imported video files, including the existing Minecraft recording.
+
+# 3. MEDIA BIN AND CUSTOM RIGHT-CLICK MENU
+
+The Media Bin currently displays imported media items on the left.
+
+Implement a custom context menu when the user right-clicks a media item. Do not show the browser's default context menu on Cutline items.
+
+First determine whether an item is an imported media asset or a saved project. Use appropriate actions for each type.
+
+### Imported media context menu
+
+Include:
+
+* Rename
+* Duplicate
+* Add to Timeline
+* Reveal Source File, when supported
+* Media Properties
+* Remove from Project
+
+### Saved project context menu
+
+Include:
+
+* Open Project
+* Rename
+* Duplicate Project
+* Project Details
+* Create Backup
+* Delete Project
+
+### Empty Media Bin context menu
+
+Include:
+
+* Import Media
+* New Folder, if supported
+* Refresh Media List
+
+### Context menu behavior
+
+* Open close to the mouse pointer.
+* Automatically reposition near screen edges.
+* Use compact spacing, proper vector icons and separators.
+* Support hover, selected and disabled states.
+* Close when clicking outside or pressing Escape.
+* Support keyboard navigation.
+* Prevent accidental triggering of timeline or selection actions.
+* Make every enabled action functional.
+
+### Rename, duplicate and delete rules
+
+Rename must persist correctly. Allow Enter to confirm and Escape to cancel.
+
+Renaming a media-bin label must not pretend to rename the original file on disk.
+
+Duplicating a project must create an independent project entry without overwriting the original.
+
+Remove from Project must remove the reference from the project without deleting the original file.
+
+Delete Project must have confirmation and must not delete unrelated media files.
+
+If the application cannot perform a particular file-system action in its runtime environment, handle that limitation properly instead of pretending the operation succeeded.
+
+# 4. PROFESSIONAL MULTI-TRACK TIMELINE
+
+Upgrade the current timeline from its basic Video 1 and Audio 1 layout into a real editing system.
+
+Implement:
+
+* Multiple video tracks.
+* Multiple audio tracks.
+* Text and overlay tracks.
+* Drag-and-drop clips from the Media Bin.
+* Move clips horizontally to change their start time.
+* Move clips between compatible tracks.
+* Trim clips by dragging either edge.
+* Split clips at the playhead.
+* Delete and duplicate clips.
+* Copy and paste clips.
+* Undo and redo.
+* Ripple delete and ripple trim where appropriate.
+* Timeline snapping.
+* Track locking, visibility and muting.
+* Track height adjustment.
+* Horizontal scrolling.
+* Timeline zoom.
+* Accurate time ruler and playhead.
+* Markers and clip selection.
+* Multiple selected clips where practical.
+* Accurate duration calculations.
+* Independent source in/out points.
+* Support for overlapping clips on separate video tracks.
+
+The timeline must represent actual project data. It must not be a visual mockup.
+
+Playback must follow the arrangement of clips at the current playhead position.
+
+# 5. VIDEO TRANSFORM AND CLIP INSPECTOR
+
+When a video clip is selected, display:
+
+* Clip name.
+* Duration.
+* Start time.
+* Source in/out points.
+* Position X and Y.
+* Scale.
+* Rotation.
+* Anchor point.
+* Opacity.
+* Playback speed.
+* Volume.
+* Effects.
+* Fit to Canvas.
+* Fill Canvas.
+* Reset Transform.
+
+All supported changes must update the preview immediately and carry through to the exported video.
+
+Use appropriate controls for numeric values, sliders, and reset actions.
+
+# 6. TEXT, TITLES AND MOTION GRAPHICS
+
+Create a dedicated Text workspace in the left sidebar.
+
+Do not limit it to a simple Add Text button.
+
+Provide visual thumbnail previews for:
+
+* Basic text.
+* Headings.
+* Subtitles.
+* Lower thirds.
+* Animated titles.
+* Intro and outro titles.
+* Gaming montage titles.
+* Minecraft highlight titles.
+* Kill counters and gaming captions.
+* Social-media captions.
+
+### Text editor
+
+Support:
+
+* Editable text content.
+* Font family.
+* Font size and weight.
+* Text color.
+* Alignment.
+* Letter and line spacing.
+* Stroke and shadow.
+* Opacity.
+* Position and rotation.
+* Background and text-box controls.
+* Gradients where supported.
+* Fade-in and fade-out.
+* Animated text presets.
+* Duration and timing controls.
+
+Clicking a template must create a real editable text clip on an appropriate overlay track.
+
+Double-clicking a text clip should open its editor.
+
+Text must render at the correct position in the preview and in the final export.
+
+Provide practical title presets for Minecraft Bedwars, gameplay montages, YouTube videos and Shorts.
+
+# 7. AUDIO EDITING
+
+Implement a dedicated Audio workspace and actual audio editing features.
+
+Include:
+
+* Multiple audio tracks.
+* Audio waveforms.
+* Audio trimming and splitting.
+* Volume adjustment.
+* Volume keyframes.
+* Fade-in and fade-out.
+* Audio synchronization.
+* Playback speed.
+* Audio mixing.
+* Equalizer where supported.
+* Noise reduction where supported.
+* Audio ducking where supported.
+* Beat markers for montage editing.
+* Separate game audio and microphone tracks when those sources are available.
+
+Do not advertise an audio feature as working until it is connected to the actual audio processing pipeline.
+
+# 8. EFFECTS AND TRANSITIONS
+
+Create separate Effects and Transitions workspaces with searchable items and visual previews.
+
+### Effects
+
+Implement supported versions of:
+
+* Brightness and contrast.
+* Saturation and color correction.
+* Blur.
+* Sharpen.
+* Vignette.
+* Opacity.
+* Zoom.
+* Speed changes.
+* Chroma key.
+* Masks.
+* Color grading.
+* LUT support where practical.
+* Stabilization where supported.
+
+### Transitions
+
+Implement supported versions of:
+
+* Fade.
+* Cross dissolve.
+* Wipe.
+* Slide.
+* Zoom transitions.
+
+Allow users to apply, adjust, preview and remove effects or transitions.
+
+Effects and transitions must render correctly during export. Do not add decorative presets that have no real effect.
+
+# 9. ADVANCED EDITING FEATURES
+
+Add these incrementally after the core editing pipeline works:
+
+* Keyframe animation.
+* Speed ramping.
+* Reverse playback and export.
+* Freeze frames.
+* Crop and rotate.
+* Picture-in-picture.
+* Masks and overlays.
+* Nested sequences where practical.
+* Timeline markers.
+* Custom keyboard shortcuts.
+* Proxy media.
+* Preview-quality settings.
+* Render caching.
+* Autosave.
+* Crash recovery.
+* Project backups.
+* Missing-media detection.
+* Customizable workspace panels.
+
+Implement keyboard shortcuts for common actions, including splitting, deleting, undo, redo, play/pause and saving.
+
+# 10. MEDIA MANAGEMENT
+
+Support importing multiple files and dragging them into the editor.
+
+Support common video formats such as MP4, MKV, MOV, AVI and WebM when compatible with the chosen decoder.
+
+Support common audio formats, images and GIFs where the current architecture allows.
+
+Include:
+
+* Media thumbnails.
+* Search and filtering.
+* File name, duration and size.
+* Media properties.
+* Import progress and errors.
+* Duplicate import handling.
+* Missing-file warnings.
+* Optional folder organization.
+* Drag-and-drop importing.
+
+Generate thumbnails asynchronously where possible so importing large files does not freeze the interface.
+
+# 11. RECORDING FEATURES
+
+If the existing application environment supports recording, implement:
+
+* Screen recording.
+* Game/system audio recording.
+* Microphone recording.
+* Webcam recording.
+* Resolution and frame-rate selection.
+* Recording duration and status indicators.
+
+Respect operating-system permissions and explain unavailable recording capabilities.
+
+Do not sacrifice core editing functionality to implement recording prematurely.
+
+# 12. PROFESSIONAL EXPORT SYSTEM
+
+Implement a real export workflow with:
+
+* MP4 and other supported formats.
+* H.264 and H.265 when supported.
+* 720p, 1080p, 1440p and 4K output where feasible.
+* 24, 30 and 60 FPS, with additional supported options.
+* Custom bitrate.
+* Quality presets.
+* Hardware encoding when available.
+* Export progress.
+* Cancel export.
+* Error handling.
+* Estimated file size when possible.
+* Correct audio/video synchronization.
+* Correct aspect ratio and framing.
+* YouTube, Shorts and other platform presets.
+
+The export must include all timeline clips, tracks, text, effects, transitions and audio that the editor supports.
+
+Use the existing media-processing engine if it is reliable. If FFmpeg is already integrated, reuse it rather than introducing an unnecessary second rendering system.
+
+If the project is browser-based, account for browser memory limitations and supported codecs.
+
+# 13. PERFORMANCE FOR LOW-END PCS
+
+My target machine has an Intel Core i3-1115G4, Intel UHD integrated graphics and 8 GB RAM.
+
+Optimize Cutline for this class of hardware.
+
+Implement:
+
+* Low-resolution preview modes.
+* Proxy generation where practical.
+* Asynchronous media loading.
+* Efficient thumbnail generation.
+* Render caching.
+* Hardware acceleration when available.
+* Memory-conscious decoding.
+* Avoiding unnecessary background processes.
+* Proper cleanup of media resources.
+* Responsive timeline interactions.
+* Graceful handling of large recordings.
+
+The editor should remain responsive while editing gameplay recordings.
+
+Do not promise 4K real-time playback on weak hardware. Prefer reliable editing and efficient final rendering.
+
+# 14. PROFESSIONAL USER INTERFACE
+
+Preserve the Cutline identity: dark charcoal background, yellow accents and professional vector icons.
+
+Create:
+
+* Top toolbar with project name, save, open, undo, redo and export.
+* Left sidebar for Media, Audio, Text, Overlays, Effects, Transitions, Filters and Templates.
+* Central preview with playback controls.
+* Right-side contextual Clip Inspector.
+* Expandable multi-track timeline.
+* Resizable panels.
+* Tooltips and useful keyboard shortcuts.
+* Clear selected and disabled states.
+* Consistent spacing and typography.
+
+The interface must remain usable at 1366×768 and larger desktop resolutions.
+
+Do not unnecessarily reduce the preview size or waste space with oversized empty panels.
+
+# 15. PROJECT SYSTEM
+
+Implement reliable project saving and reopening.
+
+Preserve:
+
+* Project name.
+* Imported media references.
+* Timeline tracks and clip arrangement.
+* Source in/out points.
+* Text and overlay data.
+* Effects and transitions.
+* Transform properties.
+* Audio settings.
+* Canvas resolution and frame rate.
+
+Provide autosave, recovery after crashes, and missing-media handling where supported.
+
+Do not lose project state after a refresh or restart.
+
+# 16. OPTIONAL AI FEATURES
+
+After the core editor is stable, consider:
+
+* Automatic subtitle generation.
+* Silence removal.
+* Beat detection.
+* Scene detection.
+* Background removal.
+* Noise reduction.
+
+Prefer local/offline processing when practical. AI features must be optional and must not require a paid API for normal editing.
+
+# 17. IMPLEMENTATION ORDER
+
+Follow this priority order:
+
+PHASE 1 — Inspect current work, preserve it, and report actual progress internally.
+
+PHASE 2 — Fix full-frame video preview and transform behavior.
+
+PHASE 3 — Implement Media Bin context menus, rename, duplicate, removal and project management.
+
+PHASE 4 — Complete the multi-track timeline, drag/drop, trimming, splitting, snapping and undo/redo.
+
+PHASE 5 — Implement editable text clips, title templates and overlay rendering.
+
+PHASE 6 — Complete audio handling, effects and transitions.
+
+PHASE 7 — Connect all supported editing operations to the final export pipeline.
+
+PHASE 8 — Implement advanced keyframes, color grading, performance optimizations and optional AI features.
+
+PHASE 9 — Test the complete workflow and fix regressions.
+
+If some of these features are already working, verify them and move on instead of rebuilding them.
+
+# 18. TESTING AND COMPLETION RULES
+
+Test the following workflow using actual project data:
+
+1. Import a Minecraft gameplay recording.
+2. Verify the entire frame is visible.
+3. Add multiple clips to different timeline positions.
+4. Trim, split, move and delete clips.
+5. Add a text template and edit its content.
+6. Place text over video.
+7. Change video position, scale and rotation.
+8. Add an audio track and adjust its volume.
+9. Save the project and reopen it.
+10. Right-click Media Bin items and test all supported menu actions.
+11. Export a short video and verify the framing, clip order, text and audio.
+12. Run the project's build checks and fix errors introduced by the changes.
+
+Do not delete or reset existing user projects while testing.
+
+Do not mark a feature as complete just because its button appears in the interface.
+
+At the end, provide a concise report distinguishing:
+
+* Already implemented and verified.
+* Newly implemented and verified.
+* Partially implemented.
+* Not implemented or blocked by environment limitations.
+
+Continue working on the actual code until the current phase is complete. Do not stop after generating a plan or UI mockup.

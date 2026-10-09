@@ -70,6 +70,7 @@ export type Project = {
   frameRate: number;
   tracks: Track[];
   clips: Clip[];
+  removedAssetIds?: string[];
 };
 
 export type Asset = {
@@ -138,20 +139,22 @@ function drawText(
   const fontSize = Math.max(8, text.fontSize);
   const lineHeight = fontSize * 1.18;
   const maxWidth = project.width * .84;
-  const words = text.content.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
-  let line = '';
   context.font = `${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && context.measureText(candidate).width > maxWidth) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
+  for (const paragraph of text.content.replace(/\r/g, '').split('\n')) {
+    let line = '';
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && context.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
     }
+    lines.push(line);
   }
-  if (line || lines.length === 0) lines.push(line);
+  if (lines.length === 0) lines.push('');
 
   const x = text.x * project.width - project.width / 2;
   const firstY = text.y * project.height - project.height / 2;

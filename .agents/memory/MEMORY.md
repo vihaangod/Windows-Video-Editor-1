@@ -1,0 +1,1 @@
+- [Cutline product constraints](cutline-product-constraints.md) — keep the editor local-first and usable on low-spec Windows PCs.

@@ -1,21 +1,14 @@
 import './inspector-panel.css';
-import type { Clip, ClipEffects, ClipTransform, TextOverlay } from '@/lib/composition';
+import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextOverlay } from '@/lib/composition';
 
-export type InspectorClip = Clip & {
-  transform: ClipTransform;
-  effects: ClipEffects;
-  opacity: number;
-  fadeIn: number;
-  fadeOut: number;
-};
-type ClipPatch = Partial<Clip> & {
+type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
   text?: Partial<TextOverlay>;
 };
 
 export type InspectorPanelProps = {
-  clip: InspectorClip | null;
+  clip: Clip | null;
   assetName?: string;
   assetKind?: 'video' | 'audio' | 'image' | 'text';
   sourceDuration?: number;
@@ -82,8 +75,11 @@ export default function InspectorPanel({
   const speed = clamp(clip.speed, 0.1, 4);
   const sourceOut = Math.max(safeSourceIn, clip.sourceOut);
   const clipDuration = Math.max(0, (sourceOut - safeSourceIn) / Math.max(0.1, speed));
-  const transform = clip.transform;
-  const effects = clip.effects;
+  const transform = { ...DEFAULT_TRANSFORM, ...clip.transform };
+  const effects = { ...DEFAULT_EFFECTS, ...clip.effects };
+  const opacity = clip.opacity ?? 1;
+  const fadeIn = clip.fadeIn ?? 0;
+  const fadeOut = clip.fadeOut ?? 0;
   const isText = Boolean(clip.text);
 
   const updateTime = (key: 'timelineStart' | 'sourceIn' | 'sourceOut', raw: string) => {
@@ -260,7 +256,7 @@ export default function InspectorPanel({
         <div className="cutline-inspector__fields">
           {rangeControl('Anchor X', 'slider-anchor-x', transform.anchorX, 0, 1, .01, (value) => onChange({ transform: { anchorX: value } }))}
           {rangeControl('Anchor Y', 'slider-anchor-y', transform.anchorY, 0, 1, .01, (value) => onChange({ transform: { anchorY: value } }))}
-        {rangeControl('Opacity', 'slider-clip-opacity', clip.opacity * 100, 0, 100, 1, (value) => onChange({ opacity: value / 100 }), '%')}
+        {rangeControl('Opacity', 'slider-clip-opacity', opacity * 100, 0, 100, 1, (value) => onChange({ opacity: value / 100 }), '%')}
         </div>
         {assetKind !== 'text' && <div className="cutline-inspector__actions">
           <button type="button" disabled={disabled} onClick={onFit} data-testid="button-fit-canvas">Fit canvas</button>
@@ -334,8 +330,8 @@ export default function InspectorPanel({
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-fade-heading">
         <div className="cutline-inspector__section-title"><h2 id="inspector-fade-heading">Fades</h2></div>
-        {rangeControl('Fade in', 'slider-fade-in', clip.fadeIn, 0, Math.min(5, clipDuration / 2), .05, (value) => onChange({ fadeIn: value }), 's')}
-        {rangeControl('Fade out', 'slider-fade-out', clip.fadeOut, 0, Math.min(5, clipDuration / 2), .05, (value) => onChange({ fadeOut: value }), 's')}
+        {rangeControl('Fade in', 'slider-fade-in', fadeIn, 0, Math.min(5, clipDuration / 2), .05, (value) => onChange({ fadeIn: value }), 's')}
+        {rangeControl('Fade out', 'slider-fade-out', fadeOut, 0, Math.min(5, clipDuration / 2), .05, (value) => onChange({ fadeOut: value }), 's')}
       </section>
 
       <div className="cutline-inspector__footer">

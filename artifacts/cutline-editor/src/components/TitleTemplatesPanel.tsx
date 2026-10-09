@@ -106,6 +106,91 @@ const TITLE_TEMPLATES: TitleTemplate[] = [
     shadow: true,
     opacity: 1,
   },
+  {
+    id: 'basic-text',
+    name: 'Basic text',
+    text: 'Add your text',
+    fontFamily: '"Segoe UI", Tahoma, sans-serif',
+    fontSize: 64,
+    fontWeight: 650,
+    color: '#ffffff',
+    align: 'center',
+    x: 0.5,
+    y: 0.5,
+    backgroundColor: '',
+    outlineColor: '#111820',
+    outlineWidth: 1,
+    shadow: true,
+    opacity: 1,
+  },
+  {
+    id: 'minecraft-highlight',
+    name: 'Minecraft highlight',
+    text: '1 HP\nCLUTCH!',
+    fontFamily: 'Impact, "Arial Narrow", sans-serif',
+    fontSize: 108,
+    fontWeight: 900,
+    color: '#d4ff65',
+    align: 'center',
+    x: 0.5,
+    y: 0.5,
+    backgroundColor: '',
+    outlineColor: '#142016',
+    outlineWidth: 7,
+    shadow: true,
+    opacity: 1,
+  },
+  {
+    id: 'kill-counter',
+    name: 'Kill counter',
+    text: 'ELIMINATIONS  03',
+    fontFamily: 'Consolas, "Courier New", monospace',
+    fontSize: 30,
+    fontWeight: 800,
+    color: '#ffffff',
+    align: 'right',
+    x: 0.94,
+    y: 0.09,
+    backgroundColor: 'rgba(15, 21, 19, 0.78)',
+    outlineColor: '#263528',
+    outlineWidth: 1,
+    shadow: true,
+    opacity: 1,
+  },
+  {
+    id: 'round-heading',
+    name: 'Round heading',
+    text: 'ROUND 01\nFINAL FIGHT',
+    fontFamily: 'Impact, "Arial Narrow", sans-serif',
+    fontSize: 76,
+    fontWeight: 900,
+    color: '#fff3d1',
+    align: 'left',
+    x: 0.09,
+    y: 0.2,
+    backgroundColor: 'rgba(18, 22, 28, 0.68)',
+    outlineColor: '#17191d',
+    outlineWidth: 2,
+    shadow: true,
+    opacity: 1,
+  },
+  {
+    id: 'highlight-banner',
+    name: 'Highlight banner',
+    text: 'NEW PERSONAL BEST!',
+    fontFamily: '"Segoe UI", Tahoma, sans-serif',
+    fontSize: 48,
+    fontWeight: 900,
+    color: '#161c21',
+    align: 'center',
+    x: 0.5,
+    y: 0.78,
+    backgroundColor: 'rgba(240, 186, 80, 0.94)',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: true,
+    opacity: 1,
+  },
 ];
 
 type TitleTemplatesPanelProps = {
@@ -142,7 +227,7 @@ export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps)
   );
 
   return (
-    <aside className="cutline-title-templates" aria-label="Title templates" data-testid="panel-title-templates">
+    <section className="cutline-title-templates" aria-label="Title templates" data-testid="panel-title-templates">
       <header className="cutline-title-templates__header">
         <div className="cutline-title-templates__heading">
           <span className="cutline-title-templates__icon" aria-hidden="true"><Type size={16} /></span>
@@ -232,6 +317,6 @@ export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps)
         )}
       </div>
       <p className="cutline-title-templates__footnote">Add a title, then adjust its timing in the timeline.</p>
-    </aside>
+    </section>
   );
 }

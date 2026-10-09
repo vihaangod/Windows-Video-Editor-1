@@ -1,9 +1,10 @@
-import { type DragEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
-  Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
-  HardDrive, Layers2, LockKeyhole, Minus, Pause, Play, Plus, Redo2, Scissors, Search,
-  SkipBack, SkipForward, Split, Trash2, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX,
+  Activity, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
+  Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
+  HardDrive, Info, Layers2, LockKeyhole, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
+  RefreshCw, Scissors, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
+  Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
 import {
   BufferTarget, CanvasSource, MediaStreamAudioTrackSource, Mp4OutputFormat,
@@ -11,6 +12,8 @@ import {
   type StreamTargetChunk,
 } from 'mediabunny';
 import NotFound from '@/pages/not-found';
+import ContextMenu, { type ContextMenuItem } from '@/components/ContextMenu';
+import EffectWorkspace from '@/components/EffectWorkspace';
 import InspectorPanel from '@/components/InspectorPanel';
 import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTemplatesPanel';
 import {
@@ -21,7 +24,6 @@ import {
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
-type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'templates';
 const DB_NAME = 'cutline-local-editor-v1';
 const DB_VERSION = 2;
 const LEGACY_STORE = 'projects';
@@ -32,7 +34,24 @@ const DEFAULT_TRACKS: Track[] = [
   { id: 'audio-1', name: 'Audio 1', kind: 'audio', order: 1, muted: false, visible: true, locked: false },
   { id: 'text-1', name: 'Text 1', kind: 'text', order: 2, muted: false, visible: true, locked: false },
 ];
-const TRACK_LABEL_WIDTH = 164;
+const TRACK_LABEL_WIDTH = 198;
+type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'templates';
+type ContextTarget = { kind: 'empty' | 'media' | 'project'; id?: string; x: number; y: number };
+type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
+  transform?: Partial<ClipTransform>;
+  effects?: Partial<ClipEffects>;
+  text?: Partial<TextOverlay>;
+};
+const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactNode }> = [
+  { id: 'media', label: 'Media', icon: <Film size={16} /> },
+  { id: 'audio', label: 'Audio', icon: <Music2 size={16} /> },
+  { id: 'text', label: 'Text', icon: <Type size={16} /> },
+  { id: 'overlays', label: 'Overlays', icon: <Layers2 size={16} /> },
+  { id: 'effects', label: 'Effects', icon: <WandSparkles size={16} /> },
+  { id: 'transitions', label: 'Transitions', icon: <Sparkles size={16} /> },
+  { id: 'filters', label: 'Filters', icon: <SlidersHorizontal size={16} /> },
+  { id: 'templates', label: 'Templates', icon: <Grid2X2 size={16} /> },
+];
 const createProject = (name = 'Untitled cut'): Project => ({
   id: crypto.randomUUID(), name, width: 1920, height: 1080, frameRate: 30,
   tracks: DEFAULT_TRACKS.map((track) => ({ ...track, id: crypto.randomUUID() })), clips: [],
@@ -111,6 +130,116 @@ async function readLocalMedia(projectId: string): Promise<Asset[]> {
     };
     req.onerror = () => { db.close(); reject(req.error); };
   });
+}
+async function deleteLocalMedia(projectId: string, assetId: string) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, 'readwrite');
+    tx.objectStore(MEDIA_STORE).delete(`${projectId}:${assetId}`);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+async function deleteLocalProject(projectId: string) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([PROJECT_STORE, MEDIA_STORE], 'readwrite');
+    tx.objectStore(PROJECT_STORE).delete(projectId);
+    const media = tx.objectStore(MEDIA_STORE);
+    const cursorRequest = media.index('projectId').openKeyCursor(IDBKeyRange.only(projectId));
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      media.delete(cursor.primaryKey);
+      cursor.continue();
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
+  });
+}
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x6000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x6000, bytes.length)));
+  }
+  return btoa(binary);
+}
+async function writeBlobAsBase64(blob: Blob, write: (chunk: string) => Promise<void>) {
+  const reader = blob.stream().getReader();
+  let carry = new Uint8Array(0);
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value?.length) continue;
+    const joined = new Uint8Array(carry.length + value.length);
+    joined.set(carry);
+    joined.set(value, carry.length);
+    const completeLength = joined.length - (joined.length % 3);
+    if (completeLength) await write(encodeBase64(joined.subarray(0, completeLength)));
+    carry = joined.slice(completeLength);
+  }
+  if (carry.length) await write(encodeBase64(carry));
+}
+async function createProjectBackup(record: SavedProject) {
+  type BackupWriter = { write: (chunk: string) => Promise<void>; close: () => Promise<void>; abort: (reason?: unknown) => Promise<void> };
+  type BackupWindow = Window & {
+    showSaveFilePicker?: (options: { suggestedName: string; types: Array<{ description: string; accept: Record<string, string[]> }> }) => Promise<{ createWritable: () => Promise<unknown> }>;
+  };
+  const picker = (window as BackupWindow).showSaveFilePicker;
+  let handle: { createWritable: () => Promise<unknown> } | null = null;
+  if (picker) {
+    try {
+      handle = await picker.call(window, {
+        suggestedName: `${record.project.name.replace(/[^\w -]/g, '').trim() || 'cutline-project'}.cutline.json`,
+        types: [{ description: 'Cutline project backup', accept: { 'application/json': ['.cutline.json'] } }],
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      throw error;
+    }
+  }
+
+  const assets = await readLocalMedia(record.project.id);
+  const totalBytes = assets.reduce((sum, asset) => sum + asset.byteSize, 0);
+  if (!handle && totalBytes > 64 * 1024 * 1024) {
+    throw new Error('This browser cannot stream a backup to disk. Use Chrome or Edge for backups larger than 64 MB.');
+  }
+
+  let writer: BackupWriter | null = null;
+  const chunks: string[] = [];
+  const write = async (chunk: string) => {
+    if (writer) await writer.write(chunk);
+    else chunks.push(chunk);
+  };
+  try {
+    if (handle) writer = await handle.createWritable() as BackupWriter;
+    await write(`{"schemaVersion":1,"project":${JSON.stringify(record.project)},"savedAt":${record.savedAt},"assets":[`);
+    for (const [index, asset] of assets.entries()) {
+      const { blob, ...metadata } = asset;
+      if (index) await write(',');
+      const serialized = JSON.stringify(metadata);
+      await write(`${serialized.slice(0, -1)},"dataBase64":"`);
+      await writeBlobAsBase64(blob, write);
+      await write('"}');
+    }
+    await write(']}');
+    if (writer) await writer.close();
+    else {
+      const blob = new Blob(chunks, { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${record.project.name.replace(/[^\w -]/g, '').trim() || 'cutline-project'}.cutline.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+  } catch (error) {
+    if (writer) {
+      try { await writer.abort(error); } catch { /* preserve the write error */ }
+    }
+    throw error;
+  }
 }
 const uid = () => crypto.randomUUID();
 const formatTime = (seconds: number) => {
@@ -215,15 +344,17 @@ function Home() {
   const [exportProgress, setExportProgress] = useState(0);
   const [dropActive, setDropActive] = useState(false);
   const [saveState, setSaveState] = useState('Local project');
+  const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
+  const [detailsDialog, setDetailsDialog] = useState<{ title: string; rows: Array<[string, string]> } | null>(null);
   const [exportName, setExportName] = useState('cutline-export');
   const [format, setFormat] = useState<'mp4' | 'webm'>('mp4');
   const [zoom, setZoom] = useState(1);
   const [, setHistoryRevision] = useState(0);
-  const [, setMediaRevision] = useState(0);
-  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+  const [mediaRevision, setMediaRevision] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewFrameSize, setPreviewFrameSize] = useState({ width: 0, height: 0 });
   const previewMedia = useRef(new Map<string, HTMLImageElement | HTMLVideoElement>());
   const previewUrls = useRef(new Map<string, string>());
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
@@ -319,6 +450,20 @@ function Home() {
     return () => window.clearTimeout(saveTimer.current);
   }, [project, assets, notify, projectHydrated]);
 
+  useEffect(() => {
+    const wrap = previewWrapRef.current;
+    if (!wrap) return;
+    const updateFrameSize = () => {
+      const ratio = project.width / Math.max(1, project.height);
+      const width = Math.max(0, Math.min(wrap.clientWidth * .78, 860, (wrap.clientHeight - 30) * ratio));
+      setPreviewFrameSize({ width, height: width / ratio });
+    };
+    const observer = new ResizeObserver(updateFrameSize);
+    observer.observe(wrap);
+    updateFrameSize();
+    return () => observer.disconnect();
+  }, [project.width, project.height]);
+
   const contentEnd = useMemo(() => Math.max(0, ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip))), [project.clips]);
   const timelineEnd = Math.max(30, contentEnd + 3);
   const scale = 16 * zoom;
@@ -339,7 +484,8 @@ function Home() {
   const selectedAsset = selectedClip ? assets.find((asset) => asset.id === selectedClip.assetId) : null;
   const selectedAssetKind = selectedClip?.text ? 'text' : selectedAsset ? isAudio(selectedAsset) ? 'audio' : isImage(selectedAsset) ? 'image' : 'video' : undefined;
   const selectedAssetName = selectedClip?.text?.templateName || selectedAsset?.name;
-  const filteredAssets = assets.filter((asset) => {
+  const projectMediaAssets = assets.filter((asset) => !project.removedAssetIds?.includes(asset.id));
+  const filteredAssets = projectMediaAssets.filter((asset) => {
     const matchesSearch = asset.name.toLowerCase().includes(search.toLowerCase());
     const matchesWorkspace = libraryWorkspace === 'audio' ? isAudio(asset)
       : libraryWorkspace === 'overlays' ? isImage(asset)
@@ -415,16 +561,6 @@ function Home() {
     }
   }, [assets]);
 
-  useEffect(() => {
-    const wrap = previewWrapRef.current;
-    if (!wrap) return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setPreviewSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(wrap);
-    return () => observer.disconnect();
-  }, []);
-
   useEffect(() => () => {
     previewMedia.current.forEach((media) => {
       if (media instanceof HTMLVideoElement) {
@@ -491,13 +627,13 @@ function Home() {
   useEffect(() => {
     if (!playing || !timelineRef.current) return;
     const timeline = timelineRef.current;
-    const playheadX = 124 + playhead * scale;
+    const playheadX = TRACK_LABEL_WIDTH + playhead * scale;
     const visibleRight = timeline.scrollLeft + timeline.clientWidth;
-    const visibleLeft = timeline.scrollLeft + 124;
+    const visibleLeft = timeline.scrollLeft + TRACK_LABEL_WIDTH;
     if (playheadX > visibleRight - 56) {
       timeline.scrollLeft = Math.max(0, playheadX - timeline.clientWidth + 72);
     } else if (playheadX < visibleLeft) {
-      timeline.scrollLeft = Math.max(0, playheadX - 124);
+      timeline.scrollLeft = Math.max(0, playheadX - TRACK_LABEL_WIDTH);
     }
   }, [playhead, playing, scale]);
 
@@ -640,9 +776,10 @@ function Home() {
     commit((current) => ({ ...current, clips: current.clips.filter((clip) => clip.id !== selectedClip.id) }));
     setSelectedClipId(null);
   };
-  const updateSelectedClip = (patch: Partial<Clip> & { transform?: Partial<ClipTransform>; effects?: Partial<ClipEffects>; text?: Partial<TextOverlay> }) => {
+  const updateSelectedClip = (patch: ClipPatch) => {
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock this track before changing the clip.', true); return; }
+    const { text: textPatch, ...clipPatch } = patch;
     const asset = assets.find((item) => item.id === selectedClip.assetId);
     const maxSourceTime = Math.max(asset?.duration || 0, selectedClip.sourceOut, selectedClip.sourceIn + .08 * selectedClip.speed);
     commit((current) => ({
@@ -654,18 +791,18 @@ function Home() {
         const sourceOut = Math.min(maxSourceTime, Math.max(sourceIn + .08 * speed, patch.sourceOut ?? clip.sourceOut));
         return {
           ...clip,
-          ...patch,
-          timelineStart: Math.max(0, patch.timelineStart ?? clip.timelineStart),
+          ...clipPatch,
+          timelineStart: Math.max(0, clipPatch.timelineStart ?? clip.timelineStart),
           sourceIn,
           sourceOut,
           speed,
-          volume: Math.min(2, Math.max(0, patch.volume ?? clip.volume)),
-          transform: { ...DEFAULT_TRANSFORM, ...clip.transform, ...patch.transform },
-          effects: { ...DEFAULT_EFFECTS, ...clip.effects, ...patch.effects },
-          opacity: Math.max(0, Math.min(1, patch.opacity ?? clip.opacity ?? 1)),
-          fadeIn: Math.max(0, Math.min(getClipDuration(clip) / 2, patch.fadeIn ?? clip.fadeIn ?? 0)),
-          fadeOut: Math.max(0, Math.min(getClipDuration(clip) / 2, patch.fadeOut ?? clip.fadeOut ?? 0)),
-          ...(clip.text && patch.text ? { text: { ...clip.text, ...patch.text } } : {}),
+          volume: Math.min(2, Math.max(0, clipPatch.volume ?? clip.volume)),
+          transform: { ...DEFAULT_TRANSFORM, ...clip.transform, ...clipPatch.transform },
+          effects: { ...DEFAULT_EFFECTS, ...clip.effects, ...clipPatch.effects },
+          opacity: Math.max(0, Math.min(1, clipPatch.opacity ?? clip.opacity ?? 1)),
+          fadeIn: Math.max(0, Math.min(getClipDuration(clip) / 2, clipPatch.fadeIn ?? clip.fadeIn ?? 0)),
+          fadeOut: Math.max(0, Math.min(getClipDuration(clip) / 2, clipPatch.fadeOut ?? clip.fadeOut ?? 0)),
+          ...(clip.text && textPatch ? { text: { ...clip.text, ...textPatch } } : {}),
         };
       }),
     }));
@@ -730,7 +867,7 @@ function Home() {
     ...current,
     tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : 'Text'} ${current.tracks.filter((t) => t.kind === kind).length + 1}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
   }));
-  const moveClip = (clipId: string, delta: number, targetTrackId?: string) => {
+  const moveClip = (clipId: string, nextStart: number, targetTrackId?: string) => {
     const movingClip = projectRef.current.clips.find((clip) => clip.id === clipId);
     const targetTrack = targetTrackId ? projectRef.current.tracks.find((track) => track.id === targetTrackId) : undefined;
     const asset = movingClip ? assets.find((item) => item.id === movingClip.assetId) : undefined;
@@ -749,7 +886,7 @@ function Home() {
       ...current,
       clips: current.clips.map((clip) => clip.id === clipId ? {
         ...clip,
-        timelineStart: Math.max(0, clip.timelineStart + delta),
+        timelineStart: snapTimelineTime(Math.max(0, nextStart), clipId),
         ...(targetTrackId ? { trackId: targetTrackId } : {}),
       } : clip),
     }));
@@ -851,21 +988,188 @@ function Home() {
   };
   const openProject = async (record: SavedProject) => {
     try {
+      await saveLocalProject(projectRef.current, assets);
       const localAssets = await readLocalMedia(record.project.id);
+      setSavedProjects(await readLocalProjects());
       history.current = []; future.current = [];
       setProject(record.project); setAssets(localAssets); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
       notify(`Opened “${record.project.name}” from local storage.`);
     } catch {
-      notify('Could not load this project’s local media. Its project settings are still saved.', true);
+      notify('Could not save the current project or load the selected project. The current project is still open.', true);
     }
   };
-  const newProject = () => {
+  const newProject = async () => {
+    try {
+      await saveLocalProject(projectRef.current, assets);
+      setSavedProjects(await readLocalProjects());
+    } catch {
+      if (!window.confirm('The current project could not be saved locally. Start a new project anyway? Recent changes may be lost.')) return;
+    }
     history.current = []; future.current = [];
     setProject(createProject(`Cut ${new Date().toLocaleDateString()}`)); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
   };
   const renameProject = () => {
     const name = window.prompt('Project name', project.name);
     if (name?.trim()) commit((current) => ({ ...current, name: name.trim() }));
+  };
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const openContextMenu = (event: ReactMouseEvent, kind: ContextTarget['kind'], id?: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ kind, id, x: event.clientX, y: event.clientY });
+  };
+  const openKeyboardContextMenu = (event: React.KeyboardEvent<HTMLElement>, kind: ContextTarget['kind'], id?: string) => {
+    if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ kind, id, x: rect.left, y: rect.bottom });
+  };
+  const refreshMedia = async () => {
+    try {
+      setAssets(await readLocalMedia(projectRef.current.id));
+      notify('Media list refreshed from this device.');
+    } catch {
+      notify('Could not refresh media from local storage.', true);
+    }
+  };
+  const renameMedia = async (asset: Asset) => {
+    const name = window.prompt('Rename this media item (the source file will not be renamed)', asset.name);
+    if (!name?.trim() || name.trim() === asset.name) return;
+    const nextAssets = assets.map((item) => item.id === asset.id ? { ...item, name: name.trim() } : item);
+    try {
+      await saveLocalMedia(projectRef.current.id, [nextAssets.find((item) => item.id === asset.id)!]);
+      setAssets(nextAssets);
+      await saveLocalProject(projectRef.current, nextAssets);
+      setSavedProjects(await readLocalProjects());
+      notify('Media label updated. The source file was not renamed.');
+    } catch {
+      notify('Could not save the media label.', true);
+    }
+  };
+  const duplicateMedia = async (asset: Asset) => {
+    const duplicate: Asset = { ...asset, id: uid(), name: `Copy of ${asset.name}` };
+    const nextAssets = [...assets, duplicate];
+    try {
+      await saveLocalMedia(projectRef.current.id, [duplicate]);
+      setAssets(nextAssets);
+      await saveLocalProject(projectRef.current, nextAssets);
+      setSavedProjects(await readLocalProjects());
+      setSelectedAssetId(duplicate.id);
+      notify('Media item duplicated in this project.');
+    } catch {
+      notify('Could not duplicate this media item. Check available browser storage.', true);
+    }
+  };
+  const removeMediaFromProject = (asset: Asset) => {
+    const linkedClips = projectRef.current.clips.filter((clip) => clip.assetId === asset.id);
+    const message = linkedClips.length
+      ? `Remove “${asset.name}” and its ${linkedClips.length} timeline clip${linkedClips.length === 1 ? '' : 's'} from this project? The source file on your computer will not be deleted.`
+      : `Remove “${asset.name}” from this project? The source file on your computer will not be deleted.`;
+    if (!window.confirm(message)) return;
+    const nextProject: Project = {
+      ...projectRef.current,
+      clips: projectRef.current.clips.filter((clip) => clip.assetId !== asset.id),
+      removedAssetIds: [...new Set([...(projectRef.current.removedAssetIds || []), asset.id])],
+    };
+    commit(() => nextProject);
+    if (selectedClipId && linkedClips.some((clip) => clip.id === selectedClipId)) setSelectedClipId(null);
+    if (selectedAssetId === asset.id) setSelectedAssetId(null);
+    void saveLocalProject(nextProject, assets).then(() => notify('Media reference removed. The source file was left untouched.'))
+      .catch(() => notify('Could not save the project after removing this media reference.', true));
+  };
+  const showMediaDetails = (asset: Asset) => {
+    setDetailsDialog({
+      title: 'Media properties',
+      rows: [
+        ['Name', asset.name],
+        ['Type', asset.mimeType || 'Unknown'],
+        ['Dimensions', asset.width && asset.height ? `${asset.width} × ${asset.height}` : 'Not available'],
+        ['Duration', asset.duration ? formatTime(asset.duration) : 'Not available'],
+        ['File size', formatBytes(asset.byteSize)],
+        ['Storage', 'Stored locally in this browser'],
+        ['Source file', 'Not changed or deleted'],
+      ],
+    });
+  };
+  const renameSavedProject = async (record: SavedProject) => {
+    const name = window.prompt('Rename project', record.project.name);
+    if (!name?.trim() || name.trim() === record.project.name) return;
+    const updatedProject = { ...record.project, name: name.trim() };
+    try {
+      const projectAssets = await readLocalMedia(record.project.id);
+      await saveLocalProject(updatedProject, projectAssets);
+      if (projectRef.current.id === record.project.id) commit(() => updatedProject);
+      setSavedProjects(await readLocalProjects());
+      notify('Project renamed.');
+    } catch {
+      notify('Could not rename this project in local storage.', true);
+    }
+  };
+  const duplicateSavedProject = async (record: SavedProject) => {
+    const duplicateProject: Project = { ...record.project, id: uid(), name: `${record.project.name} copy` };
+    try {
+      const projectAssets = await readLocalMedia(record.project.id);
+      await saveLocalMedia(duplicateProject.id, projectAssets);
+      await saveLocalProject(duplicateProject, projectAssets);
+      setSavedProjects(await readLocalProjects());
+      notify(`Created “${duplicateProject.name}” as a separate project.`);
+    } catch {
+      try { await deleteLocalProject(duplicateProject.id); } catch { /* no entry was created */ }
+      notify('Could not duplicate this project. Check available browser storage.', true);
+    }
+  };
+  const showProjectDetails = async (record: SavedProject) => {
+    let mediaCount = record.assets.length;
+    try { mediaCount = (await readLocalMedia(record.project.id)).length; } catch { /* display saved metadata count */ }
+    setDetailsDialog({
+      title: 'Project details',
+      rows: [
+        ['Name', record.project.name],
+        ['Last saved', new Date(record.savedAt).toLocaleString()],
+        ['Media items', String(mediaCount)],
+        ['Timeline clips', String(record.project.clips.length)],
+        ['Tracks', String(record.project.tracks.length)],
+        ['Canvas', `${record.project.width} × ${record.project.height} at ${record.project.frameRate} fps`],
+        ['Project ID', record.project.id],
+      ],
+    });
+  };
+  const deleteSavedProject = async (record: SavedProject) => {
+    if (!window.confirm(`Delete “${record.project.name}” and its Cutline-stored media copies from this browser? Original files on your computer will not be deleted.`)) return;
+    try {
+      await deleteLocalProject(record.project.id);
+      const remaining = await readLocalProjects();
+      setSavedProjects(remaining);
+      if (projectRef.current.id === record.project.id) {
+        history.current = [];
+        future.current = [];
+        setProject(createProject());
+        setAssets([]);
+        setSelectedClipId(null);
+        setSelectedAssetId(null);
+        setPlayhead(0);
+      }
+      notify('Project removed from this browser. Original files were not deleted.');
+    } catch {
+      notify('Could not delete this project from local storage.', true);
+    }
+  };
+  const makeProjectBackup = async (record: SavedProject) => {
+    try {
+      await createProjectBackup(record);
+      notify('Project backup created.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not create the project backup.', true);
+    }
+  };
+  const snapTimelineTime = (time: number, ignoreClipId?: string) => {
+    const targets = [0, Math.round(time / 5) * 5];
+    for (const clip of projectRef.current.clips) {
+      if (clip.id === ignoreClipId) continue;
+      targets.push(clip.timelineStart, clip.timelineStart + getClipDuration(clip));
+    }
+    const nearest = targets.reduce((best, candidate) => Math.abs(candidate - time) < Math.abs(best - time) ? candidate : best, time);
+    return Math.abs(nearest - time) <= .14 ? nearest : time;
   };
 
   useEffect(() => {
@@ -891,8 +1195,7 @@ function Home() {
   });
   const timelinePosition = (event: DragEvent, trackId: string) => {
     const lane = event.currentTarget.getBoundingClientRect();
-    const scrollLeft = timelineRef.current?.scrollLeft || 0;
-    return { time: Math.max(0, (event.clientX - lane.left + scrollLeft) / scale), trackId };
+    return { time: Math.max(0, (event.clientX - lane.left) / scale), trackId };
   };
 
   const exportCut = async () => {
@@ -1144,6 +1447,27 @@ function Home() {
     }
   };
 
+  const contextMenuAsset = contextMenu?.kind === 'media' ? assets.find((asset) => asset.id === contextMenu.id) : undefined;
+  const contextMenuProject = contextMenu?.kind === 'project' ? savedProjects.find((record) => record.project.id === contextMenu.id) : undefined;
+  const contextMenuItems: ContextMenuItem[] = contextMenu?.kind === 'media' && contextMenuAsset ? [
+    { label: 'Rename', icon: <Pencil size={14} />, action: () => void renameMedia(contextMenuAsset) },
+    { label: 'Duplicate', icon: <Copy size={14} />, action: () => void duplicateMedia(contextMenuAsset) },
+    { label: 'Add to Timeline', icon: <Plus size={14} />, action: () => addAssetToTimeline(contextMenuAsset), separatorBefore: true },
+    { label: 'Reveal Source File', icon: <FolderOpen size={14} />, action: () => undefined, disabled: true, hint: 'Not available in browser' },
+    { label: 'Media Properties', icon: <Info size={14} />, action: () => showMediaDetails(contextMenuAsset) },
+    { label: 'Remove from Project', icon: <Trash2 size={14} />, action: () => removeMediaFromProject(contextMenuAsset), destructive: true, separatorBefore: true },
+  ] : contextMenu?.kind === 'project' && contextMenuProject ? [
+    { label: 'Open Project', icon: <FolderOpen size={14} />, action: () => void openProject(contextMenuProject) },
+    { label: 'Rename', icon: <Pencil size={14} />, action: () => void renameSavedProject(contextMenuProject) },
+    { label: 'Duplicate Project', icon: <Copy size={14} />, action: () => void duplicateSavedProject(contextMenuProject), separatorBefore: true },
+    { label: 'Project Details', icon: <Info size={14} />, action: () => void showProjectDetails(contextMenuProject) },
+    { label: 'Create Backup', icon: <Download size={14} />, action: () => void makeProjectBackup(contextMenuProject) },
+    { label: 'Delete Project', icon: <Trash2 size={14} />, action: () => void deleteSavedProject(contextMenuProject), destructive: true, separatorBefore: true },
+  ] : contextMenu?.kind === 'empty' ? [
+    { label: 'Import Media', icon: <Upload size={14} />, action: () => fileInput.current?.click() },
+    { label: 'Refresh Media List', icon: <RefreshCw size={14} />, action: () => void refreshMedia(), separatorBefore: true },
+  ] : [];
+
   return (
     <main className={`workspace ${dropActive ? 'drop-active' : ''}`}
       onDragEnter={(event) => {
@@ -1171,36 +1495,75 @@ function Home() {
         <button className="btn primary" onClick={() => setDialog('export')} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
       <section className="editor-body">
+        <nav className="workspace-rail" aria-label="Editing workspaces">
+          {WORKSPACE_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`workspace-rail__item${libraryWorkspace === item.id ? ' is-active' : ''}`}
+              aria-label={item.label}
+              aria-pressed={libraryWorkspace === item.id}
+              title={item.label}
+              onClick={() => setLibraryWorkspace(item.id)}
+              data-testid={`button-workspace-${item.id}`}
+            >
+              {item.icon}<span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
         <aside className="library">
-          <div className="panel-heading"><Grid2X2 size={14} /> Media bin <small>{assets.length} ITEMS</small></div>
-          <div className="asset-tools">
-            <label className="search-box"><Search size={13} /><input aria-label="Search media" data-testid="input-search-media" placeholder="Find media…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-            <button className="icon-btn active" title="Import local media" onClick={() => fileInput.current?.click()} data-testid="button-import"><Plus size={17} /></button>
-            <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => { if (event.target.files) void importFiles(event.target.files); event.target.value = ''; }} data-testid="input-media-files" />
-          </div>
-          <div className="asset-list">
-            {filteredAssets.length === 0 ? (
-              <button className="asset-row" style={{ minHeight: 72, cursor: 'pointer' }} onClick={() => fileInput.current?.click()} data-testid="button-empty-import">
-                <span className="asset-thumb"><Upload size={16} /></span><span className="asset-details"><span className="asset-name">{assets.length ? 'No matching media' : 'Bring in your first clip'}</span><span className="asset-meta">{assets.length ? 'Try another search' : 'Import files from this PC'}</span></span>
-              </button>
-            ) : filteredAssets.map((asset) => (
-              <div key={asset.id} role="button" tabIndex={0} className={`asset-row ${selectedAssetId === asset.id ? 'selected' : ''}`}
-                draggable onDragStart={(event) => { event.dataTransfer.setData('application/x-cutline-asset', asset.id); event.dataTransfer.effectAllowed = 'copy'; }}
-                onClick={() => setSelectedAssetId(asset.id)}
-                onDoubleClick={() => addAssetToTimeline(asset)} onKeyDown={(event) => { if (event.key === 'Enter') addAssetToTimeline(asset); }}
-                data-testid={`row-media-${asset.id}`}>
-                <span className="asset-thumb">{isImage(asset) ? <FileImage size={16} /> : isAudio(asset) ? <FileAudio size={16} /> : <Film size={17} />}</span>
-                <span className="asset-details"><span className="asset-name">{asset.name}</span><span className="asset-meta">{asset.duration ? formatTime(asset.duration) : 'Duration unavailable'} · {formatBytes(asset.byteSize)}</span></span>
-                <button className="icon-btn asset-add" aria-label={`Add ${asset.name} to timeline`} onClick={(event) => { event.stopPropagation(); addAssetToTimeline(asset); }} data-testid={`button-add-media-${asset.id}`}><Plus size={15} /></button>
-              </div>
-            ))}
-          </div>
-          <div className="library-foot">Files remain on this device. Cutline does not upload your media.</div>
+          {(libraryWorkspace === 'media' || libraryWorkspace === 'audio' || libraryWorkspace === 'overlays') && <div className="panel-heading">
+            {WORKSPACE_ITEMS.find((item) => item.id === libraryWorkspace)?.icon}
+            {WORKSPACE_ITEMS.find((item) => item.id === libraryWorkspace)?.label}
+            <small>{libraryWorkspace === 'media' ? `${filteredAssets.length} ITEMS` : libraryWorkspace === 'audio' ? `${filteredAssets.length} ITEMS` : ''}</small>
+          </div>}
+          {(libraryWorkspace === 'media' || libraryWorkspace === 'audio' || libraryWorkspace === 'overlays') && <>
+            <div className="asset-tools">
+              <label className="search-box"><Search size={13} /><input aria-label={`Search ${libraryWorkspace}`} data-testid="input-search-media" placeholder="Find media…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+              <button className="icon-btn active" title="Import local media" onClick={() => fileInput.current?.click()} data-testid="button-import"><Plus size={17} /></button>
+              <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => { if (event.target.files) void importFiles(event.target.files); event.target.value = ''; }} data-testid="input-media-files" />
+            </div>
+            <div className="asset-list" onContextMenu={(event) => {
+              if (!(event.target instanceof Element) || !event.target.closest('[data-testid^="row-media-"]')) openContextMenu(event, 'empty');
+            }}>
+              {filteredAssets.length === 0 ? (
+                <button className="asset-row" style={{ minHeight: 72, cursor: 'pointer' }} onClick={() => fileInput.current?.click()} data-testid="button-empty-import">
+                  <span className="asset-thumb"><Upload size={16} /></span><span className="asset-details"><span className="asset-name">{projectMediaAssets.length ? 'No matching media' : 'Bring in your first clip'}</span><span className="asset-meta">{projectMediaAssets.length ? 'Try another search or workspace' : 'Import files from this PC'}</span></span>
+                </button>
+              ) : filteredAssets.map((asset) => (
+                <div key={asset.id} role="button" tabIndex={0} className={`asset-row ${selectedAssetId === asset.id ? 'selected' : ''}`}
+                  draggable onDragStart={(event) => { event.dataTransfer.setData('application/x-cutline-asset', asset.id); event.dataTransfer.effectAllowed = 'copy'; }}
+                  onClick={() => setSelectedAssetId(asset.id)}
+                  onDoubleClick={() => addAssetToTimeline(asset)}
+                  onContextMenu={(event) => openContextMenu(event, 'media', asset.id)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); addAssetToTimeline(asset); }
+                    openKeyboardContextMenu(event, 'media', asset.id);
+                  }}
+                  data-testid={`row-media-${asset.id}`}>
+                  <span className="asset-thumb">{asset.thumbnail ? <img src={asset.thumbnail} alt="" /> : isImage(asset) ? <FileImage size={16} /> : isAudio(asset) ? <FileAudio size={16} /> : <Film size={17} />}</span>
+                  <span className="asset-details"><span className="asset-name">{asset.name}</span><span className="asset-meta">{asset.duration ? formatTime(asset.duration) : 'Duration unavailable'} · {formatBytes(asset.byteSize)}</span></span>
+                  <button className="icon-btn asset-add" aria-label={`Add ${asset.name} to timeline`} onClick={(event) => { event.stopPropagation(); addAssetToTimeline(asset); }} data-testid={`button-add-media-${asset.id}`}><Plus size={15} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="library-foot">Media stays on this device. Removing an item only removes it from this project.</div>
+          </>}
+          {(libraryWorkspace === 'text' || libraryWorkspace === 'templates') && <TitleTemplatesPanel onAdd={addTitleTemplate} />}
+          {(libraryWorkspace === 'effects' || libraryWorkspace === 'transitions' || libraryWorkspace === 'filters') &&
+            <EffectWorkspace
+              workspace={libraryWorkspace}
+              disabled={!selectedClip || selectedClipLocked}
+              onEffects={applySelectedEffect}
+              onFade={applySelectedFade}
+            />}
         </aside>
         <section className="stage">
           <div className="stage-tools">
-            <button className="icon-btn" title="Add video track" onClick={() => addTrack('video')} data-testid="button-add-video-track"><Layers2 size={15} /></button>
-            <button className="icon-btn" title="Add audio track" onClick={() => addTrack('audio')} data-testid="button-add-audio-track"><AudioLines size={15} /></button>
+          <button className="icon-btn" title="Add video track" onClick={() => addTrack('video')} data-testid="button-add-video-track"><Layers2 size={15} /></button>
+          <button className="icon-btn" title="Add audio track" onClick={() => addTrack('audio')} data-testid="button-add-audio-track"><AudioLines size={15} /></button>
+          <button className="icon-btn" title="Add text track" onClick={() => addTrack('text')} data-testid="button-add-text-track"><Type size={15} /></button>
             <span className="divider" />
             <button className="icon-btn" title="Split selected clip at playhead" onClick={splitSelected} disabled={!selectedClip} data-testid="button-split"><Split size={15} /></button>
             <button className="icon-btn" title="Delete selected clip" onClick={removeSelected} disabled={!selectedClip} data-testid="button-delete-clip"><Trash2 size={15} /></button>
@@ -1213,23 +1576,18 @@ function Home() {
               <option value={24}>24 fps</option><option value={30}>30 fps</option><option value={60}>60 fps</option>
             </select>
           </div>
-          <div className="preview-wrap">
-            <div className="preview-frame">
-              {activeVisualAsset && isImage(activeVisualAsset) ? <img src={imagePreview || undefined} alt={`Preview: ${activeVisualAsset.name}`} /> :
-                activeVisualAsset ? <video
-                  ref={videoRef}
-                  src={imagePreview || undefined}
-                  playsInline
-                  preload="auto"
-                  onLoadedMetadata={(event) => {
-                    if (!activeVisualClip) return;
-                    const sourceTime = activeVisualClip.sourceIn + (playhead - activeVisualClip.timelineStart) * activeVisualClip.speed;
-                    try { event.currentTarget.currentTime = Math.max(0, sourceTime); } catch { /* browser may not have a seekable range yet */ }
-                    event.currentTarget.playbackRate = activeVisualClip.speed;
-                  }}
-                  onEnded={() => setPlaying(false)}
-                /> :
-                  <div className="preview-empty"><Clapperboard size={27} strokeWidth={1.25} /><strong>Your cut starts here</strong><span>Import media, then add it to a track</span></div>}
+          <div className="preview-wrap" ref={previewWrapRef}>
+            <div className="preview-frame" style={previewFrameSize.width
+              ? { width: `${previewFrameSize.width}px`, height: `${previewFrameSize.height}px`, aspectRatio: `${project.width} / ${project.height}` }
+              : { width: 'min(78%, 860px)', aspectRatio: `${project.width} / ${project.height}` }}>
+              <canvas
+                ref={previewCanvasRef}
+                className="preview-canvas"
+                role="img"
+                aria-label={`Video preview at ${formatTime(playhead)}; project canvas ${project.width} by ${project.height}`}
+                data-testid="canvas-video-preview"
+              />
+              {!activeVisualClips.length && <div className="preview-empty"><Clapperboard size={27} strokeWidth={1.25} /><strong>Your cut starts here</strong><span>Import media, then add it to a track</span></div>}
               {audioClips.map((clip) => (
                 <audio
                   key={clip.id}
@@ -1259,6 +1617,9 @@ function Home() {
           sourceDuration={selectedAsset?.duration}
           onChange={updateSelectedClip}
           onRemove={removeSelected}
+          onFit={() => setSelectedFit('contain')}
+          onFill={() => setSelectedFit('cover')}
+          onReset={resetSelectedTransform}
         />
       </section>
       <section className="timeline-panel">
@@ -1275,16 +1636,21 @@ function Home() {
           <button className="icon-btn" title="Zoom in timeline" onClick={() => setZoom((value) => Math.min(2, value + .25))} data-testid="button-zoom-in"><Plus size={14} /></button>
         </div>
         <div className="tracks-scroll" ref={timelineRef} data-testid="region-timeline">
-          <div className="timeline-inner" style={{ width: 124 + timelineEnd * scale }}>
+            <div className="timeline-inner" style={{ width: TRACK_LABEL_WIDTH + timelineEnd * scale }}>
             <div className="ruler">
               {Array.from({ length: Math.ceil(timelineEnd / 5) + 1 }, (_, index) => <span className="tick" key={index} style={{ left: index * 5 * scale }}>{index === 0 ? '00:00' : `${String(Math.floor(index * 5 / 60)).padStart(2, '0')}:${String(index * 5 % 60).padStart(2, '0')}`}</span>)}
             </div>
             {orderedTracks.map((track) => (
               <div className="track-row" key={track.id}>
                 <div className="track-meta">
-                  {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : <AudioLines size={13} color="#b4a0e1" />}
+                  {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : <Type size={13} color="#e6b84f" />}
                   <span className="track-name">{track.name}</span>
-                  <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>
+                  {track.kind !== 'audio' && <button className={`icon-btn ${track.visible === false ? 'active' : ''}`} title={track.visible === false ? 'Show track' : 'Hide track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, visible: t.visible === false } : t) }))} data-testid={`button-visibility-track-${track.id}`}>{track.visible === false ? <EyeOff size={12} /> : <Eye size={12} />}</button>}
+                  {track.kind !== 'text' && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
+                  <button className={`icon-btn ${track.locked ? 'active' : ''}`} title={track.locked ? 'Unlock track' : 'Lock track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, locked: !t.locked } : t) }))} data-testid={`button-lock-track-${track.id}`}>{track.locked ? <LockKeyhole size={11} /> : <UnlockKeyhole size={11} />}</button>
+                  <button className="icon-btn track-order-control" title="Move track up" aria-label={`Move ${track.name} up`} disabled={track.order === 0} onClick={() => reorderTrack(track.id, -1)} data-testid={`button-track-up-${track.id}`}><ArrowUp size={11} /></button>
+                  <button className="icon-btn track-order-control" title="Move track down" aria-label={`Move ${track.name} down`} disabled={track.order === orderedTracks.length - 1} onClick={() => reorderTrack(track.id, 1)} data-testid={`button-track-down-${track.id}`}><ArrowDown size={11} /></button>
+                  <button className="icon-btn track-delete-control" title={`Delete ${track.name}`} aria-label={`Delete ${track.name}`} onClick={() => deleteTrack(track)} data-testid={`button-delete-track-${track.id}`}><Trash2 size={11} /></button>
                 </div>
           <div className="track-lane" style={{ backgroundSize: `${5 * scale}px 100%` }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
                   event.preventDefault();
@@ -1299,16 +1665,24 @@ function Home() {
                 }} onClick={(event) => {
                   if ((event.target as HTMLElement).closest('.clip')) return;
                   const rect = event.currentTarget.getBoundingClientRect();
-                  setPlayhead(Math.max(0, (event.clientX - rect.left + (timelineRef.current?.scrollLeft || 0)) / scale));
+                  setPlayhead(Math.max(0, (event.clientX - rect.left) / scale));
                 }} data-testid={`lane-track-${track.id}`}>
                   {project.clips.filter((clip) => clip.trackId === track.id).map((clip) => {
                     const asset = assets.find((item) => item.id === clip.assetId);
-                    if (!asset) return null;
-                    const duration = (clip.sourceOut - clip.sourceIn) / clip.speed;
-                    return <div key={clip.id} draggable className={`clip ${isAudio(asset) ? 'audio' : isImage(asset) ? 'image' : 'video'} ${selectedClipId === clip.id ? 'selected' : ''}`}
+                    if (!asset && !clip.text) return null;
+                    const duration = getClipDuration(clip);
+                    const clipKindClass = clip.text ? 'text' : asset && isAudio(asset) ? 'audio' : asset && isImage(asset) ? 'image' : 'video';
+                    const clipLabel = clip.text?.templateName || asset?.name || 'Text clip';
+                    return <div key={clip.id} draggable={!track.locked} className={`clip ${clipKindClass} ${selectedClipId === clip.id ? 'selected' : ''}`}
                       style={{ left: clip.timelineStart * scale, width: Math.max(8, duration * scale), opacity: track.muted ? .5 : 1 }}
-                      onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); setSelectedAssetId(asset.id); }}
-                      onDoubleClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); setPlayhead(clip.timelineStart); }}
+                      onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); setSelectedAssetId(asset?.id || null); }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedClipId(clip.id);
+                        setSelectedAssetId(asset?.id || null);
+                        setPlayhead(clip.timelineStart);
+                        if (clip.text) window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="input-title-content"]')?.focus(), 0);
+                      }}
                       onDragStart={(event) => {
                         if ((event.target as HTMLElement).closest('.clip-trim-handle')) {
                           event.preventDefault();
@@ -1317,11 +1691,11 @@ function Home() {
                         event.dataTransfer.setData('application/x-cutline-clip', clip.id);
                         event.dataTransfer.setData('application/x-cutline-offset', String(Math.max(0, (event.clientX - event.currentTarget.getBoundingClientRect().left) / scale)));
                       }}
-                      title={`${asset.name} · ${formatTime(duration)}`} data-testid={`clip-${clip.id}`}>
+                      title={`${clipLabel} · ${formatTime(duration)}`} data-testid={`clip-${clip.id}`}>
                 <button
                   type="button"
                   className="clip-trim-handle clip-trim-handle--start"
-                  aria-label={`Trim start of ${asset.name}`}
+                  aria-label={`Trim start of ${asset?.name || clip.text?.templateName || 'Text clip'}`}
                   title="Drag to trim clip start"
                   onPointerDown={(event) => startTrimDrag(event, clip, 'start')}
                   onPointerMove={updateTrimDrag}
@@ -1329,11 +1703,11 @@ function Home() {
                   onPointerCancel={finishTrimDrag}
                   data-testid={`button-trim-clip-start-${clip.id}`}
                 />
-                <span className="clip-title">{asset.name}</span>
+                  <span className="clip-title">{clipLabel}</span>
                 <button
                   type="button"
                   className="clip-trim-handle clip-trim-handle--end"
-                  aria-label={`Trim end of ${asset.name}`}
+                  aria-label={`Trim end of ${asset?.name || clip.text?.templateName || 'Text clip'}`}
                   title="Drag to trim clip end"
                   onPointerDown={(event) => startTrimDrag(event, clip, 'end')}
                   onPointerMove={updateTrimDrag}
@@ -1358,12 +1732,21 @@ function Home() {
           <h2>Projects on this device</h2><p>Your project files and imported media are stored in this browser only.</p>
           <button className="btn primary" onClick={newProject} data-testid="button-new-project"><FilePlus2 size={14} />New project</button>
           <div style={{ marginTop: 14, maxHeight: 280, overflow: 'auto' }}>
-            {savedProjects.length ? savedProjects.sort((a, b) => b.savedAt - a.savedAt).map((record) => <button key={record.project.id} className="asset-row" style={{ width: '100%' }} onClick={() => void openProject(record)} data-testid={`button-open-saved-${record.project.id}`}>
+            {savedProjects.length ? [...savedProjects].sort((a, b) => b.savedAt - a.savedAt).map((record) => <button key={record.project.id} className="asset-row" style={{ width: '100%' }} onClick={() => void openProject(record)} onContextMenu={(event) => openContextMenu(event, 'project', record.project.id)} onKeyDown={(event) => openKeyboardContextMenu(event, 'project', record.project.id)} data-testid={`button-open-saved-${record.project.id}`}>
               <span className="asset-thumb"><Clapperboard size={16} /></span><span className="asset-details"><span className="asset-name">{record.project.name}</span><span className="asset-meta">{record.project.clips.length} clips · {new Date(record.savedAt).toLocaleString()}</span></span>
               {record.project.id === project.id && <Check size={15} color="#edb94e" />}
             </button>) : <div className="library-foot" style={{ padding: 14 }}>No saved projects yet. The current project autosaves locally.</div>}
           </div>
           <div className="dialog-actions"><button className="btn" onClick={() => setDialog(null)} data-testid="button-close-projects">Close</button></div>
+        </section>
+      </div>}
+      {detailsDialog && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsDialog(null); }} onKeyDown={(event) => { if (event.key === 'Escape') setDetailsDialog(null); }}>
+        <section className="dialog details-dialog" role="dialog" aria-modal="true" aria-label={detailsDialog.title}>
+          <h2>{detailsDialog.title}</h2>
+          <dl className="details-list">
+            {detailsDialog.rows.map(([label, value]) => <div className="details-row" key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+          </dl>
+          <div className="dialog-actions"><button className="btn" onClick={() => setDetailsDialog(null)}>Close</button></div>
         </section>
       </div>}
       {dialog === 'export' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !exporting) setDialog(null); }}>
@@ -1376,6 +1759,13 @@ function Home() {
           <div className="dialog-actions"><button className="btn" onClick={() => { if (exporting) exportCancelRequested.current = true; else setDialog(null); }} data-testid="button-cancel-export">{exporting ? 'Stop render' : 'Cancel'}</button><button className="btn primary" disabled={exporting || project.clips.length === 0} onClick={() => void exportCut()} data-testid="button-start-export">{exporting ? `${exportProgress}%` : <><Download size={14} />Render {format.toUpperCase()}</>}</button></div>
         </section>
       </div>}
+      {contextMenu && contextMenuItems.length > 0 && <ContextMenu
+        key={`${contextMenu.kind}-${contextMenu.id || 'blank'}-${contextMenu.x}-${contextMenu.y}`}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={contextMenuItems}
+        onClose={closeContextMenu}
+      />}
       {exporting && <div className="notice" role="status"><Activity size={15} />Rendering cut locally · {exportProgress}%</div>}
     </main>
   );

@@ -219,6 +219,47 @@
     linear-gradient(120deg, #55504a, #776148 45%, #344047);
 }
 
+.cutline-template-preview--basic-text {
+  background-image:
+    linear-gradient(180deg, rgba(15, 18, 22, .04), rgba(15, 18, 22, .58)),
+    radial-gradient(ellipse at 52% 43%, rgba(132, 175, 179, .35), transparent 34%),
+    linear-gradient(125deg, #39474c, #58625f 49%, #27363b);
+}
+
+.cutline-template-preview--minecraft-highlight {
+  background-image:
+    linear-gradient(180deg, rgba(14, 22, 15, .04), rgba(14, 22, 15, .68)),
+    radial-gradient(ellipse at 52% 45%, rgba(145, 201, 67, .45), transparent 30%),
+    linear-gradient(130deg, #314631, #61724a 43%, #26372e);
+}
+
+.cutline-template-preview--minecraft-highlight .cutline-template-preview__text {
+  line-height: .86;
+  letter-spacing: .035em;
+  -webkit-text-stroke: .75px #172218;
+}
+
+.cutline-template-preview--kill-counter {
+  background-image:
+    linear-gradient(180deg, rgba(12, 18, 14, .03), rgba(12, 18, 14, .68)),
+    radial-gradient(ellipse at 69% 41%, rgba(151, 197, 111, .36), transparent 28%),
+    linear-gradient(120deg, #384a3a, #60664a 49%, #28372e);
+}
+
+.cutline-template-preview--round-heading {
+  background-image:
+    linear-gradient(180deg, rgba(20, 18, 16, .06), rgba(20, 18, 16, .63)),
+    radial-gradient(ellipse at 35% 42%, rgba(215, 141, 62, .45), transparent 34%),
+    linear-gradient(124deg, #433a33, #71533b 46%, #2b333a);
+}
+
+.cutline-template-preview--highlight-banner {
+  background-image:
+    linear-gradient(180deg, rgba(16, 18, 21, .06), rgba(16, 18, 21, .66)),
+    radial-gradient(ellipse at 56% 43%, rgba(231, 180, 85, .5), transparent 30%),
+    linear-gradient(128deg, #3e4444, #76614a 46%, #2b353b);
+}
+
 .cutline-template-preview__text {
   position: absolute;
   z-index: 1;
@@ -268,6 +309,12 @@
   padding: 5px 9px;
   border-radius: 3px;
   letter-spacing: -.015em;
+}
+
+.cutline-template-preview--highlight-banner .cutline-template-preview__text {
+  padding: 5px 9px;
+  border-radius: 3px;
+  letter-spacing: -.02em;
 }
 
 .cutline-template-preview__frame-mark {
