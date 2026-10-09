@@ -1,0 +1,31 @@
+## FIX: GREEN BACKGROUND FOR THE ACTIVE PROJECT IN THE MEDIA SECTION
+
+Modify the existing Cutline Video Editor. Do not rebuild the application or change its overall design.
+
+I previously requested that the currently active project should have a green background in the Media section, but this behavior has not been implemented correctly.
+
+### Required behavior
+
+1. In the Media section, highlight the media/project item associated with the currently active project using a subtle dark green background.
+2. Add a thin green border or another subtle green accent so the active project is immediately recognizable.
+3. Keep the filename, thumbnail, duration, file size, and other metadata clearly readable.
+4. Use a professional dark-green shade that fits the existing charcoal and yellow theme. Do not make the entire item bright neon green.
+5. When the user switches to another project, update the green highlight automatically.
+6. The previously active project's highlight must disappear when another project becomes active.
+7. Keep the active-project indicator synchronized with the actual active project ID, not just the selected media item or filename.
+8. Do not highlight every imported video. Only highlight the item associated with the currently active project.
+9. If a project contains multiple imported media files, distinguish the active project using the project-management UI rather than incorrectly highlighting every media file.
+10. Preserve existing media selection, playback, timeline editing, and context-menu behavior.
+
+### Important distinction
+
+The active project and the selected timeline clip are two different states.
+
+* Active project: identified by the green background in the appropriate project list or project selector.
+* Selected timeline clip: identified using the existing yellow selection outline or accent.
+
+Do not confuse these states or replace the timeline selection styling with green.
+
+Inspect the existing project and media data structures first. If the Media section currently lists imported source files rather than projects, implement the green active-project indicator in the correct project list or project selector instead of falsely marking a source video as the project itself.
+
+Implement and test the actual behavior. Do not merely add a green CSS class that never updates when switching projects.

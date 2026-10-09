@@ -84,6 +84,8 @@ const nextProjectName = (projects: SavedProject[]) => {
   while (names.has(`new project ${number}`)) number += 1;
   return `New Project ${number}`;
 };
+const getExportVideoBitrate = (width: number, height: number, frameRate: number) =>
+  Math.round(Math.min(50_000_000, Math.max(2_000_000, width * height * frameRate * .08)));
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -566,6 +568,9 @@ function Home() {
   const timelineEnd = Math.max(30, contentEnd + 3);
   const scale = 16 * zoom;
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId) || null;
+  useEffect(() => {
+    if (selectedClipId && !selectedClip) setSelectedClipId(null);
+  }, [selectedClipId, selectedClip]);
   const selectedTrack = selectedClip ? project.tracks.find((track) => track.id === selectedClip.trackId) : undefined;
   const selectedClipLocked = Boolean(selectedTrack?.locked);
   const selectedClipHasTransition = Boolean(selectedClip && project.transitions?.some((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id));
@@ -613,6 +618,42 @@ function Home() {
   const activeVisualAsset = activeVisualClip ? assets.find((asset) => asset.id === activeVisualClip.assetId) : null;
   const selectedAsset = selectedClip ? assets.find((asset) => asset.id === selectedClip.assetId) : null;
   const selectedAssetKind = selectedClip?.text ? 'text' : selectedAsset ? (selectedClip?.audioOnly || isAudio(selectedAsset)) ? 'audio' : isImage(selectedAsset) ? 'image' : 'video' : undefined;
+  const selectedClipIsVideo = Boolean(
+    selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
+    selectedAsset && isVideo(selectedAsset),
+  );
+  const selectedClipIsVisual = Boolean(
+    selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
+    selectedAsset && (isVideo(selectedAsset) || isImage(selectedAsset)),
+  );
+  const filterDisabledReason = !selectedClip
+    ? 'Select one video clip to apply a filter.'
+    : selectedClipLocked
+      ? 'Unlock the selected track to apply a filter.'
+      : !selectedClipIsVideo
+        ? 'Filters are available on video clips, not audio or title clips.'
+        : undefined;
+  const effectDisabledReason = !selectedClip
+    ? 'Select one video or image clip to apply an effect.'
+    : selectedClipLocked
+      ? 'Unlock the selected track to apply an effect.'
+      : !selectedClipIsVisual
+        ? 'Effects are available on video and image clips, not audio or title clips.'
+        : undefined;
+  const transitionDisabledReason = !selectedClip
+    ? 'Select two adjacent video clips on the same track to apply a transition.'
+    : selectedClipLocked
+      ? 'Unlock the selected track to apply a transition.'
+      : !canApplySelectedTransition
+        ? 'Transitions require two adjacent video clips on the same track.'
+        : undefined;
+  const effectWorkspaceDisabledReason = libraryWorkspace === 'filters'
+    ? filterDisabledReason
+    : libraryWorkspace === 'effects'
+      ? effectDisabledReason
+      : libraryWorkspace === 'transitions'
+        ? transitionDisabledReason
+        : undefined;
   const selectedAssetName = selectedClip?.displayName || selectedClip?.text?.templateName || selectedAsset?.name;
   const projectMediaAssets = assets.filter((asset) => !project.removedAssetIds?.includes(asset.id));
   const filteredAssets = projectMediaAssets.filter((asset) => {
@@ -852,8 +893,9 @@ function Home() {
     setPlayhead(clip.timelineStart);
   }, [commit, notify, playhead]);
   const addTitleTemplate = useCallback((template: TitleTemplate) => {
-    const textTrack = projectRef.current.tracks.find((track) => track.kind === 'text');
-    if (textTrack?.locked) { notify('Unlock the text track before adding a title.', true); return; }
+    const textTrack = projectRef.current.tracks.find((track) =>
+      track.kind === 'text' && !track.locked && track.visible !== false,
+    );
     const track = textTrack || {
       id: uid(),
       name: `Text ${projectRef.current.tracks.filter((item) => item.kind === 'text').length + 1}`,
@@ -874,8 +916,8 @@ function Home() {
       transform: { ...DEFAULT_TRANSFORM },
       effects: { ...DEFAULT_EFFECTS },
       opacity: 1,
-      fadeIn: .25,
-      fadeOut: .25,
+      fadeIn: 0,
+      fadeOut: 0,
       text: {
         templateId: template.id,
         templateName: template.name,
@@ -1170,15 +1212,31 @@ function Home() {
     }));
     if (selectedClip?.trackId === track.id) setSelectedClipId(null);
   };
-  const applySelectedEffect = (effects: Partial<ClipEffects>) => updateSelectedClip({
-    effects: {
-      ...effects,
-      enabled: { brightness: true, contrast: true, saturation: true, blur: true, ...effects.enabled },
-    },
-  });
+  const applySelectedEffect = (effects: Partial<ClipEffects>) => {
+    if (!selectedClip) { notify('Select one video or image clip to apply an effect.', true); return; }
+    if (selectedClipLocked) { notify('Unlock the selected track to apply an effect.', true); return; }
+    if (!selectedClipIsVisual) { notify('Effects are available on video and image clips.', true); return; }
+    updateSelectedClip({
+      effects: {
+        ...effects,
+        enabled: { brightness: true, contrast: true, saturation: true, blur: true, ...effects.enabled },
+      },
+    });
+  };
+  const applySelectedFilter = (effects: Partial<ClipEffects>) => {
+    if (!selectedClip) { notify('Select one video clip to apply a filter.', true); return; }
+    if (selectedClipLocked) { notify('Unlock the selected track to apply a filter.', true); return; }
+    if (!selectedClipIsVideo) { notify('Filters are available on video clips.', true); return; }
+    updateSelectedClip({
+      effects: {
+        ...effects,
+        enabled: { brightness: true, contrast: true, saturation: true, blur: true, ...effects.enabled },
+      },
+    });
+  };
   const applySelectedTransition = (type: ClipTransition['type'], requestedDuration: number) => {
     if (!canApplySelectedTransition || !selectedClipTransitionPair) {
-      notify('Select a video clip followed immediately by another video clip on the same track.', true);
+      notify(transitionDisabledReason || 'Transitions require two adjacent video clips on the same track.', true);
       return;
     }
     const next: ClipTransition = {
@@ -1319,10 +1377,6 @@ function Home() {
       if (revision === saveRevision.current) setSaveState('error');
       notify('Save As failed. The original project is unchanged; check browser storage space and permissions.', true);
     }
-  };
-  const renameProject = () => {
-    const name = window.prompt('Project name', project.name);
-    if (name?.trim()) commit((current) => ({ ...current, name: name.trim() }));
   };
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const openContextMenu = (event: ReactMouseEvent, kind: ContextTarget['kind'], id?: string) => {
@@ -1496,13 +1550,9 @@ function Home() {
   };
   const startMarkupDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const point = getPreviewPoint(event);
-    const videoClip = [...activeVisualClips].reverse().find((clip) => {
-      const track = project.tracks.find((item) => item.id === clip.trackId);
-      const asset = assets.find((item) => item.id === clip.assetId);
-      return track?.kind === 'video' && !clip.audioOnly && asset && isVideo(asset);
-    });
+    const videoClip = selectedClipIsVideo ? selectedClip : null;
     if (!videoClip) {
-      notify('Move the playhead over a video clip before adding markup.', true);
+      notify('Select one video clip before adding markup.', true);
       return;
     }
     const track = project.tracks.find((item) => item.id === videoClip.trackId);
@@ -1510,8 +1560,17 @@ function Home() {
       notify('Unlock the video track before adding markup.', true);
       return;
     }
+    if (track?.visible === false) {
+      notify('Show the selected video track before adding markup.', true);
+      return;
+    }
+    const clipEnd = videoClip.timelineStart + getClipDuration(videoClip);
+    if (playhead < videoClip.timelineStart || playhead >= clipEnd) {
+      notify('Move the playhead inside the selected video clip before adding markup.', true);
+      return;
+    }
     if (markupTool === 'eraser') {
-      const candidates = project.markups || [];
+      const candidates = (project.markups || []).filter((drawing) => playhead >= drawing.start && playhead < drawing.end);
       const nearest = candidates
         .map((drawing) => ({
           drawing,
@@ -1525,7 +1584,6 @@ function Home() {
       }
       return;
     }
-    const clipEnd = videoClip.timelineStart + getClipDuration(videoClip);
     const drawing: MarkupDrawing = {
       id: uid(),
       tool: markupTool,
@@ -1709,6 +1767,7 @@ function Home() {
       ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip)),
       ...(project.markups || []).map((drawing) => drawing.end),
     );
+    const exportBitrate = getExportVideoBitrate(project.width, project.height, project.frameRate);
     const extension = format;
     const baseName = exportName.trim().replace(/\.(mp4|webm)$/i, '') || 'cutline-export';
     type FileWriteCommand = { type: 'write'; position: number; data: Uint8Array };
@@ -1729,7 +1788,7 @@ function Home() {
           types: [{ description: `${extension.toUpperCase()} video`, accept: { [format === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${extension}`] } }],
         });
       } else {
-        const estimatedBytes = end * (project.width >= 1920 ? 5_000_000 : project.width >= 1280 ? 2_800_000 : 1_500_000) / 8;
+        const estimatedBytes = end * (exportBitrate + 128_000) / 8;
         if (end > 30 || estimatedBytes > 64 * 1024 * 1024) {
           notify('This browser cannot stream exports to disk. Use current Edge or Chrome with the Save File dialog, or shorten the cut to 30 seconds or less before using the in-memory fallback.', true);
           return;
@@ -1790,10 +1849,9 @@ function Home() {
       canvas.height = project.height;
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Canvas rendering is unavailable in this browser.');
-      const bitrate = Math.round(Math.min(5_000_000, Math.max(1_200_000, project.width * project.height * project.frameRate * 0.06)));
       videoSource = new CanvasSource(canvas, {
         codec: format === 'mp4' ? 'avc' : 'vp8',
-        quality: new Quality({ bitrate }),
+        quality: new Quality({ bitrate: exportBitrate }),
         hardwareAcceleration: 'no-preference',
       });
       output.addVideoTrack(videoSource, { frameRate: project.frameRate });
@@ -1874,7 +1932,9 @@ function Home() {
       if (audioContext) await audioContext.resume();
       await output.start();
       const startedAt = performance.now();
-      let previousFrame = -1;
+      const frameDuration = 1 / project.frameRate;
+      const totalFrames = Math.max(1, Math.ceil(end * project.frameRate - 1e-7));
+      let nextFrameNumber = 0;
       await new Promise<void>((resolve, reject) => {
         const drawFrame = async (now: number) => {
           if (exportCancelRequested.current) {
@@ -1882,10 +1942,13 @@ function Home() {
             return;
           }
           const elapsed = Math.min(end, (now - startedAt) / 1000);
-          const frameNumber = Math.floor(elapsed * project.frameRate);
-          if (frameNumber > previousFrame) {
-            previousFrame = frameNumber;
-            const timestamp = frameNumber / project.frameRate;
+          const lastAvailableFrame = Math.min(totalFrames - 1, Math.floor(elapsed * project.frameRate + 1e-7));
+          while (nextFrameNumber <= lastAvailableFrame) {
+            if (exportCancelRequested.current) {
+              reject(new DOMException('Export cancelled by the user.', 'AbortError'));
+              return;
+            }
+            const timestamp = nextFrameNumber * frameDuration;
             const t = Math.min(end, timestamp);
             if (failureFromAudio) { reject(failureFromAudio); return; }
             renderProjectFrame(context, project, assets, mediaByAsset, t, true);
@@ -1902,14 +1965,15 @@ function Home() {
               } else if (!media.paused) media.pause();
             });
             try {
-              await videoSource!.add(timestamp, Math.min(1 / project.frameRate, Math.max(0, end - timestamp)));
+              await videoSource!.add(timestamp, Math.min(frameDuration, Math.max(0, end - timestamp)));
             } catch (error) {
               reject(error);
               return;
             }
-            setExportProgress(Math.min(99, Math.round(elapsed / end * 100)));
+            nextFrameNumber += 1;
           }
-          if (elapsed >= end) { resolve(); return; }
+          setExportProgress(Math.min(99, Math.round(elapsed / end * 100)));
+          if (elapsed >= end && nextFrameNumber >= totalFrames) { resolve(); return; }
           requestAnimationFrame((nextNow) => { void drawFrame(nextNow).catch(reject); });
         };
         requestAnimationFrame((now) => { void drawFrame(now).catch(reject); });
@@ -2067,7 +2131,6 @@ function Home() {
       }}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><Scissors size={16} strokeWidth={2.6} /></span><span>cutline</span></div>
-        <button className="project-name" onClick={renameProject} title="Rename project" aria-label={`Rename project ${project.name}`} data-testid="button-rename-project"><span>{project.name}</span><Pencil size={12} aria-hidden="true" /></button>
         <div className={`save-state save-state--${saveState}`} role="status" aria-live="polite" data-testid="status-save-state">
           <span aria-hidden="true">●</span>
           {saveState === 'saved' ? 'Saved'
@@ -2078,7 +2141,7 @@ function Home() {
         <div className="top-spacer" />
         <button className="icon-btn" onClick={undo} disabled={!history.current.length} title="Undo (Ctrl+Z)" data-testid="button-undo"><Undo2 size={16} /></button>
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
-        <button className="btn" onClick={openProjects} data-testid="button-open-project"><FolderOpen size={14} /><span>Open</span></button>
+        <button className="btn" onClick={openProjects} title="Manage projects" aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
         <button className="btn primary" onClick={() => setDialog('export')} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
@@ -2142,10 +2205,9 @@ function Home() {
           {(libraryWorkspace === 'effects' || libraryWorkspace === 'transitions' || libraryWorkspace === 'filters') &&
             <EffectWorkspace
               workspace={libraryWorkspace}
-              disabled={!selectedClip || selectedClipLocked ||
-                ((libraryWorkspace === 'effects' || libraryWorkspace === 'filters') && (selectedAssetKind === 'audio' || selectedAssetKind === 'text')) ||
-                (libraryWorkspace === 'transitions' && !canApplySelectedTransition)}
-              onEffects={applySelectedEffect}
+              disabled={Boolean(effectWorkspaceDisabledReason)}
+              disabledReason={effectWorkspaceDisabledReason}
+              onEffects={libraryWorkspace === 'filters' ? applySelectedFilter : applySelectedEffect}
               onTransition={applySelectedTransition}
               onRemoveTransition={removeSelectedTransition}
               hasSelectedTransition={selectedClipHasTransition && !selectedClipLocked}
@@ -2193,10 +2255,10 @@ function Home() {
             <span className="divider" />
             <label>Canvas</label>
             <select aria-label="Project resolution" value={`${project.width}x${project.height}`} onChange={(event) => { const [width, height] = event.target.value.split('x').map(Number); commit((current) => ({ ...current, width, height })); }} data-testid="select-resolution">
-              <option value="1920x1080">1080p</option><option value="1280x720">720p</option><option value="854x480">480p</option>
+              <option value="3840x2160">2160p · 4K</option><option value="2560x1440">1440p</option><option value="1920x1080">1080p</option><option value="1280x720">720p</option><option value="854x480">480p</option>
             </select>
             <select aria-label="Project frame rate" value={project.frameRate} onChange={(event) => commit((current) => ({ ...current, frameRate: Number(event.target.value) }))} data-testid="select-frame-rate">
-              <option value={24}>24 fps</option><option value={30}>30 fps</option><option value={60}>60 fps</option>
+              <option value={24}>24 fps</option><option value={30}>30 fps</option><option value={60}>60 fps</option><option value={120}>120 fps</option>
             </select>
             <span className="divider" />
             <div className="preview-zoom-tools" role="group" aria-label="Preview zoom">
@@ -2419,20 +2481,25 @@ function Home() {
           </div>
           <div className="project-library__list">
             {visibleSavedProjects.length ? visibleSavedProjects.map((record) => {
+              const isCurrent = record.project.id === project.id;
               const currentProject = record.project.id === project.id ? project : record.project;
               const currentStatus = record.project.id === project.id ? saveState : 'saved';
               return <article
                 key={record.project.id}
-                className={`project-library__row${record.project.id === project.id ? ' is-current' : ''}`}
+                className={`project-library__row${isCurrent ? ' is-current' : ''}`}
                 onContextMenu={(event) => openContextMenu(event, 'project', record.project.id)}
                 onKeyDown={(event) => openKeyboardContextMenu(event, 'project', record.project.id)}
                 tabIndex={0}
-                aria-label={`Project ${currentProject.name}`}
+                aria-current={isCurrent ? 'true' : undefined}
+                aria-label={`Project ${currentProject.name}${isCurrent ? ', active project' : ''}`}
                 data-testid={`row-project-${record.project.id}`}
               >
                 <span className="project-library__icon"><Clapperboard size={16} /></span>
                 <div className="project-library__details">
-                  <button type="button" className="project-library__open" onClick={() => void openProject(record)} data-testid={`button-open-saved-${record.project.id}`}>{currentProject.name}</button>
+                  <div className="project-library__name-row">
+                    <button type="button" className="project-library__open" onClick={() => void openProject(record)} data-testid={`button-open-saved-${record.project.id}`}>{currentProject.name}</button>
+                    {isCurrent && <span className="project-library__active-label">Active project</span>}
+                  </div>
                   <span>{new Date(record.savedAt).toLocaleString()} · {currentProject.width} × {currentProject.height} · {currentProject.frameRate} fps · {currentProject.clips.length} clips</span>
                   <small className={`project-library__status project-library__status--${currentStatus}`}><i />{currentStatus === 'saved' ? 'Saved' : currentStatus === 'saving' ? 'Saving…' : currentStatus === 'dirty' ? 'Unsaved changes' : 'Save failed'}</small>
                 </div>

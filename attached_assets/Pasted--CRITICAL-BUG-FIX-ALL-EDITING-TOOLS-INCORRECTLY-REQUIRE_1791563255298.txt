@@ -1,0 +1,132 @@
+# CRITICAL BUG FIX: ALL EDITING TOOLS INCORRECTLY REQUIRE ADJACENT CLIPS
+
+Fix the existing Cutline Video Editor. Do not rebuild the application or change its overall UI.
+
+## The main bug
+
+Multiple editing workspaces incorrectly display this message:
+
+"Select an unlocked video clip with an adjacent clip on the same track."
+
+This validation is being applied to tools that should work on a single selected clip.
+
+I have encountered this problem in Filters and need you to audit ALL editing workspaces, including Transitions, Effects, Color Adjustments, Markup, Text & Titles, Audio, and other clip tools.
+
+## 1. Implement separate validation rules for each tool
+
+Do not use one shared validation function that requires adjacent clips for every editing operation.
+
+### Tools that should work with one selected clip
+
+**Filters**
+
+* Apply and remove filters on one unlocked video clip.
+* No adjacent clip required.
+
+**Color Adjustments**
+
+* Brightness, contrast, saturation, temperature, tint, and other supported adjustments must work on one selected video clip.
+
+**Effects**
+
+* Apply, adjust, and remove effects on one eligible clip.
+* No adjacent clip required for ordinary clip effects.
+
+**Markup**
+
+* Draw, edit, and remove annotations on one eligible video clip.
+* No adjacent clip required.
+
+**Text & Titles**
+
+* Add, edit, reposition, and style text overlays independently of adjacent clips.
+* Text should be editable even when the project contains only one video clip.
+
+**Audio**
+
+* Allow supported audio editing operations on a single eligible audio clip or a video clip containing embedded audio.
+* Do not require adjacent clips for volume, gain, fades, or supported audio effects.
+
+**Clip editing**
+
+* Allow supported operations such as trimming, splitting, playback-speed changes, and opacity adjustments on a single eligible clip.
+* Apply the correct validation for each operation.
+
+### Transitions
+
+Transitions may require two compatible neighboring clips on the same track.
+
+However:
+
+* Only the Transitions workspace should enforce this requirement for transitions that genuinely need adjacent clips.
+* Enable transitions when two eligible neighboring clips are available.
+* Clearly explain the missing requirement when no valid pair exists.
+* Do not let transition validation disable unrelated editing tools.
+
+## 2. Audit shared selection and validation logic
+
+Inspect the actual source code.
+
+Find every use of:
+
+* Adjacent-clip validation.
+* Selected-clip validation.
+* Locked-clip checks.
+* Disabled Apply buttons.
+* Shared eligibility functions.
+* Stale selected-clip IDs.
+* Incorrect workspace state.
+
+Refactor the validation system into operation-specific checks, such as:
+
+* Single video clip eligibility.
+* Single audio clip eligibility.
+* Text overlay eligibility.
+* Two adjacent clips eligibility for transitions.
+
+Use the project's existing architecture and naming conventions where practical.
+
+Do not simply hide error messages, remove all validation, or force every button to be enabled. Validate the actual requirements of each operation.
+
+## 3. Fix stale selection state
+
+Ensure that all editing tools target the currently selected timeline clip.
+
+* Use the actual clip ID.
+* Update selection state immediately when the user selects another clip.
+* Handle deselection, clip deletion, track locking, and project switching.
+* Do not use a previously selected clip after the current selection changes.
+* Display a workspace-specific message when no suitable clip is selected.
+
+## 4. Test single-clip projects
+
+Create or use a project containing exactly one unlocked video clip.
+
+Verify that:
+
+1. Filters can be applied and removed.
+2. Brightness, contrast, and saturation work.
+3. Ordinary effects can be applied and adjusted.
+4. Markup drawing works.
+5. Text can be added, edited, and repositioned.
+6. Audio volume and supported audio effects work.
+7. Supported trimming and splitting operations work.
+8. No unrelated tool displays an adjacent-clip error.
+
+Then test a project containing two adjacent clips:
+
+* Confirm valid transitions work.
+* Confirm transition duration changes work.
+* Confirm unrelated tools remain functional.
+
+Also test locked clips and projects with no selected clip.
+
+## 5. Preserve real functionality
+
+Every Apply, Remove, Reset, and adjustment control must update the actual project data and preview.
+
+Changes must persist after saving and reopening. Supported changes must also appear in the final export.
+
+Run the project's build checks, fix regressions, and report which tests passed.
+
+Do not stop after describing the problem or changing the UI. Fix the underlying validation and selection bugs across the entire application.

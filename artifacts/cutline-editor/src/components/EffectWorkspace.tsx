@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Sparkles, WandSparkles } from 'lucide-react';
+import { Search, Sparkles, Trash2, WandSparkles } from 'lucide-react';
 import { FILTER_PRESETS, type ClipEffects, type ClipTransition } from '@/lib/composition';
 
 export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
@@ -7,6 +7,7 @@ export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wi
 type Props = {
   workspace: 'effects' | 'transitions' | 'filters';
   disabled?: boolean;
+  disabledReason?: string;
   onEffects: (effects: Partial<ClipEffects>) => void;
   onTransition: (type: TransitionPresetType, duration: number) => void;
   onRemoveTransition: () => void;
@@ -43,6 +44,7 @@ const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPr
 export default function EffectWorkspace({
   workspace,
   disabled = false,
+  disabledReason,
   onEffects,
   onTransition,
   onRemoveTransition,
@@ -55,7 +57,7 @@ export default function EffectWorkspace({
   const [query, setQuery] = useState('');
   const [duration, setDuration] = useState(.6);
   useEffect(() => {
-    if (selectedTransition) setDuration(selectedTransition.duration);
+    if (selectedTransition) setDuration(Math.min(4, Math.max(.2, selectedTransition.duration)));
   }, [selectedTransition?.id, selectedTransition?.duration]);
   const presets = workspace === 'effects' ? EFFECTS : workspace === 'filters' ? FILTERS : TRANSITIONS;
   const visible = useMemo(
@@ -77,8 +79,9 @@ export default function EffectWorkspace({
   const activeFilter = selectedEffects?.filterPreset || 'original';
   const selectedFilterLabel = FILTER_PRESETS.find((preset) => preset.id === activeFilter)?.name || 'Original';
   const updateTransitionDuration = (next: number) => {
-    setDuration(next);
-    if (selectedTransition) onTransition(selectedTransition.type, next);
+    const clamped = Math.min(4, Math.max(.2, next));
+    setDuration(clamped);
+    if (selectedTransition && canApplyTransition) onTransition(selectedTransition.type, clamped);
   };
 
   return (
@@ -96,8 +99,8 @@ export default function EffectWorkspace({
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`} />
         </label>
       </header>
-      <p className="cutline-effect-workspace__note">
-        {workspace === 'transitions'
+      <p className="cutline-effect-workspace__note" role={disabled && disabledReason ? 'status' : undefined}>
+        {disabled && disabledReason ? disabledReason : workspace === 'transitions'
           ? canApplyTransition || hasSelectedTransition
             ? 'A transition is applied between the selected adjacent clips. Choose a preset to replace it.'
             : 'Select one of two video clips that touch on the same track to enable transitions.'
@@ -105,12 +108,39 @@ export default function EffectWorkspace({
             ? 'Filters change the selected clip in preview and export. Use intensity to blend with the original.'
             : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
       </p>
-      {workspace === 'transitions' && <div className="cutline-transition-controls">
-        <label htmlFor="input-transition-duration">Transition duration <strong>{duration.toFixed(1)}s</strong></label>
-        <input id="input-transition-duration" type="range" min=".2" max="2" step=".1" value={duration} onChange={(event) => updateTransitionDuration(Number(event.currentTarget.value))} aria-label="Transition duration" disabled={!canApplyTransition && !hasSelectedTransition} />
-        {selectedTransition && <small className="cutline-transition-controls__applied">Applied · {selectedTransition.type.replaceAll('-', ' ')}</small>}
-        <button type="button" className="btn flat" disabled={!hasSelectedTransition} onClick={onRemoveTransition} data-testid="button-remove-transition">Remove transition</button>
-      </div>}
+      {workspace === 'transitions' && <section className="cutline-transition-controls" aria-label="Transition duration">
+        <div className="cutline-transition-controls__header">
+          <div className="cutline-transition-controls__heading">
+            <span>TRANSITION LENGTH</span>
+            <label htmlFor="input-transition-duration">Duration</label>
+          </div>
+          <output className="cutline-transition-controls__value" htmlFor="input-transition-duration" aria-live="polite">{duration.toFixed(1)}<small>s</small></output>
+        </div>
+        <input
+          id="input-transition-duration"
+          className="cutline-transition-controls__range"
+          type="range"
+          min=".2"
+          max="4"
+          step=".1"
+          value={duration}
+          onChange={(event) => updateTransitionDuration(Number(event.currentTarget.value))}
+          aria-label="Transition duration"
+          disabled={!canApplyTransition}
+          data-testid="slider-transition-duration"
+        />
+        <div className="cutline-transition-controls__scale" aria-hidden="true"><span>0.2 s</span><span>4.0 s</span></div>
+        <div className="cutline-transition-controls__footer">
+          {selectedTransition && canApplyTransition
+            ? <small className="cutline-transition-controls__applied"><i />Applied · {selectedTransition.type.replaceAll('-', ' ')}</small>
+            : selectedTransition
+              ? <small className="cutline-transition-controls__hint">The clips must touch to use this transition</small>
+              : <small className="cutline-transition-controls__hint">Choose a transition to use this duration</small>}
+          <button type="button" className="cutline-transition-controls__remove" disabled={!hasSelectedTransition} onClick={onRemoveTransition} data-testid="button-remove-transition">
+            <Trash2 size={13} aria-hidden="true" />Remove
+          </button>
+        </div>
+      </section>}
       {workspace === 'filters' && <>
         <div className="cutline-filter-workspace__active">
           <span>Selected filter</span><strong>{selectedFilterLabel}</strong>
@@ -132,7 +162,7 @@ export default function EffectWorkspace({
             className="cutline-effect-card"
             disabled={disabled}
             onClick={() => apply(preset)}
-            title={disabled ? 'Select an unlocked video clip with an adjacent clip on the same track' : `Apply ${preset.name}`}
+              title={disabled ? disabledReason || `Select a clip to use ${title.toLowerCase()}` : `Apply ${preset.name}`}
             aria-pressed={workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter}
             data-testid={workspace === 'filters' ? `button-filter-${(preset as typeof FILTERS[number]).id}` : undefined}
           >
