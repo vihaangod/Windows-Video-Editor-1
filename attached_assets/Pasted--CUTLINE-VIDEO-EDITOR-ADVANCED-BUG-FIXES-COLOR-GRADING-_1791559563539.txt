@@ -1,0 +1,267 @@
+# CUTLINE VIDEO EDITOR — ADVANCED BUG FIXES, COLOR GRADING, FILTERS, DRAWING TOOLS & PROJECT MANAGEMENT
+
+Continue working on my existing Cutline Video Editor project. Do not rebuild the app from scratch, delete existing features, or replace the current UI with a mockup.
+
+Inspect the current code, identify the existing rendering, timeline, storage, and project-management architecture, and fix the actual causes of the issues described below. Preserve working functionality and existing projects.
+
+The application already has a dark interface with yellow accents, a video preview, Media Bin, timeline, Text & Titles, Clip Inspector, Transitions, Effects, and project controls.
+
+## 1. REDESIGN PROJECT NAME AND PROJECT MANAGEMENT
+
+The current "Untitled cut" box in the top toolbar looks bulky and unattractive. It also makes it difficult to identify which project is currently being edited when multiple projects exist.
+
+### Compact top toolbar
+
+* Replace the large rounded project-name box with a compact, professional design.
+* Display the active project name as clean text in the top toolbar.
+* Remove the oversized background box and unnecessary dropdown styling.
+* Add a subtle pencil icon or another clear rename control.
+* Keep the save-status indicator close to the project name.
+* Preserve the charcoal background, yellow accents, and existing toolbar functionality.
+* Keep the project name readable without wasting horizontal space.
+
+### Automatic project naming
+
+* Use "New Project 1" as a sensible default for a newly created project.
+* If that name already exists, automatically choose the next available number.
+* Allow users to rename projects at any time.
+* Renaming must preserve all existing edits and media references.
+
+### Project library
+
+Create a proper Projects screen or project library accessible from the existing Open button or a clearly labeled Projects option.
+
+Display each project in a compact card or row containing:
+
+* Project name.
+* Last modified date and time.
+* Canvas resolution.
+* Frame rate.
+* Optional thumbnail.
+* Save status where relevant.
+
+Provide functional actions for:
+
+* Open Project.
+* Rename Project.
+* Duplicate Project.
+* Delete Project.
+* Save As.
+
+Add search and sorting by project name and modification date.
+
+### Reliable project identity and saving
+
+* Give every project a unique internal ID independent of its display name.
+* Save operations must target the currently active project ID.
+* Opening another project must load that project's own timeline, text, effects, filters, transitions, and settings.
+* Save As must create an independent project rather than overwrite the original.
+* Duplicating a project must preserve its contents while creating a separate project identity.
+* Warn users before discarding unsaved changes.
+* Confirm before deleting a project.
+* Do not delete the original imported media files when deleting a project.
+* Do not claim that saving succeeded until the storage operation actually succeeds.
+
+### Project status indicators
+
+Implement accurate status feedback:
+
+* Green: Saved.
+* Yellow/amber: Unsaved changes.
+* Neutral or animated indicator: Saving.
+* Red: Save failed.
+
+Update the status whenever project data changes, including text, clip positions, timing, effects, filters, transitions, markup, and project settings.
+
+Persist project metadata using the existing storage architecture. Do not create a decorative project library that does not actually open, rename, duplicate, or delete projects.
+
+## 2. FIX TEXT THAT IS INVISIBLE OR NOT RENDERING
+
+Typing in the Content field must update the selected text overlay immediately.
+
+Fix text rendering, layering, clipping, font-size scaling, coordinate calculations, and preview/export consistency.
+
+Requirements:
+
+* Display text at the correct position on the video canvas.
+* Ensure readable default colors and visible text.
+* Preserve line breaks and multiline captions.
+* Render text above the video.
+* Keep text synchronized with the playhead and clip duration.
+* Save and restore all text properties.
+* Use consistent project-canvas coordinates for preview and export.
+
+## 3. CAMERA-STYLE FILTERS WORKSPACE
+
+Create a searchable Filters workspace with approximately 10 genuine filter presets:
+
+1. Original
+2. Vivid
+3. Cinematic
+4. Cool Blue
+5. Warm
+6. Dream
+7. Pine
+8. Vintage
+9. Noir
+10. Fade
+
+Each filter must visibly affect the selected video clip.
+
+Implement visual previews, selected states, adjustable intensity from 0% to 100%, removal, reset, and persistence.
+
+Filters must affect the actual preview and exported video, not just the appearance of the filter cards.
+
+## 4. PROFESSIONAL COLOR CORRECTION
+
+Implement working controls for:
+
+* Brightness.
+* Contrast.
+* Saturation.
+* Exposure, where supported.
+* Temperature.
+* Tint.
+* Highlights and shadows, where supported.
+* Fade.
+* Vignette.
+
+Changes must update the preview immediately, support reset, persist in the project, and render correctly during export.
+
+## 5. MARKUP AND DRAWING TOOLS
+
+Create a Markup workspace that lets users draw directly over the video preview.
+
+Include:
+
+* Pen.
+* Highlighter.
+* Arrow.
+* Straight line.
+* Rectangle.
+* Circle or ellipse.
+* Eraser.
+* Brush size.
+* Opacity.
+* Undo and redo.
+* Clear drawings.
+* Individual drawing selection and deletion where practical.
+
+### Color picker
+
+Provide a real color picker that opens when the user clicks the color control.
+
+Support custom colors, hexadecimal input, and separate stroke and fill colors where appropriate.
+
+### Drawing behavior
+
+* Draw directly on the video preview using the mouse.
+* Convert preview coordinates correctly to project-canvas coordinates.
+* Prevent drawing gestures from accidentally moving the playhead or video clip.
+* Store drawings as editable project data.
+* Support drawing duration and timing.
+* Render drawings above the video.
+* Preserve drawings after saving and reopening.
+* Include drawings in the final exported video.
+
+The user must be able to draw a colored arrow pointing to a Minecraft player, write notes over gameplay, or highlight a selected area.
+
+## 6. FIX TRANSITIONS COMPLETELY
+
+The existing Transitions panel includes Fade Through Black and Wipe, but the controls appear disabled or do not work correctly.
+
+Implement:
+
+* Cross Dissolve.
+* Fade Through Black.
+* Wipe.
+* Slide.
+
+Requirements:
+
+* Enable transitions when valid adjacent clips on the same video track are selected.
+* Explain why a transition cannot be applied when the selection is invalid.
+* Make Apply update the actual project data.
+* Display the transition at the clip boundary.
+* Allow duration adjustment, removal, and replacement.
+* Update preview playback and final export.
+* Prevent invalid clip timing.
+* Ensure selection state does not leave controls permanently disabled.
+
+## 7. FIX EFFECTS AND EFFECTS WORKSPACE
+
+Audit and connect the existing controls to the actual rendering pipeline.
+
+Implement and verify:
+
+* Brightness.
+* Contrast.
+* Saturation.
+* Blur.
+* Sharpen, where supported.
+* Opacity.
+* Fade-in and fade-out.
+* Vignette.
+
+Effects must have functional Apply, parameter adjustment, reset, removal, preview updates, persistence, and export behavior.
+
+## 8. FIX TIMELINE AND DURATION CONTROLS
+
+Use consistent timing units, preferably seconds.
+
+* Fix the transition duration slider.
+* Validate numeric input.
+* Prevent invalid, negative, or NaN durations.
+* Keep source in/out points valid.
+* Update the timeline and preview after edits.
+* Separate clip duration from transition duration.
+* Ensure controls always target the correct selected clip or transition.
+* Support functional splitting, trimming, and removal where already provided.
+
+## 9. PREVIEW AND EXPORT CONSISTENCY
+
+Use one consistent project model for supported editing operations.
+
+The preview and export must reflect:
+
+* Text and text backgrounds.
+* Position and scale.
+* Filters and color correction.
+* Effects.
+* Markup drawings.
+* Transitions.
+* Clip trimming and splitting.
+* Audio volume and fades.
+
+Inspect the current rendering engine and extend it rather than unnecessarily replacing it. If a feature cannot be exported correctly in the current environment, report that limitation honestly.
+
+## 10. MAINTAIN THE EXISTING DESIGN
+
+Keep the dark charcoal interface, yellow accents, and professional vector icons.
+
+* Keep the video preview as large as practical.
+* Preserve Media, Audio, Text, Effects, Filters, Transitions, and Markup workspaces.
+* Match scrollbar styling to the application theme.
+* Avoid oversized controls, overlapping labels, and clipped text.
+* Ensure responsive behavior at 1366×768 and 1920×1080.
+
+## 11. TEST THE ACTUAL APPLICATION
+
+Use the existing project and verify:
+
+1. Rename a project and confirm the new name persists.
+2. Create two projects and confirm their timelines and edits remain separate.
+3. Duplicate, open, and delete a project safely.
+4. Confirm the save-status indicator reflects real save operations.
+5. Edit a title and verify it appears immediately.
+6. Change text color, position, and background.
+7. Apply Vivid and Cool Blue filters and verify visible differences.
+8. Adjust brightness, contrast, and saturation.
+9. Draw an arrow and rectangle, then change their colors.
+10. Apply a transition between adjacent clips and change its duration.
+11. Save, reopen, and verify the project state.
+12. Export a short video and verify text, filters, color correction, markup, transitions, and audio.
+
+Run the build checks and fix regressions.
+
+Before implementing anything, inspect what already exists. Reuse working code and preserve existing user data. Do not stop after producing a plan or UI mockup. Implement the changes and report which features were actually tested successfully.

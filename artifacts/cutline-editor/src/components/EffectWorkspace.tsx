@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, Sparkles, WandSparkles } from 'lucide-react';
-import type { ClipEffects } from '@/lib/composition';
+import { FILTER_PRESETS, type ClipEffects, type ClipTransition } from '@/lib/composition';
 
 export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
 
@@ -11,6 +11,10 @@ type Props = {
   onTransition: (type: TransitionPresetType, duration: number) => void;
   onRemoveTransition: () => void;
   hasSelectedTransition?: boolean;
+  selectedTransition?: ClipTransition | null;
+  selectedEffects?: Partial<ClipEffects>;
+  thumbnail?: string;
+  canApplyTransition?: boolean;
 };
 
 const EFFECTS: Array<{ name: string; description: string; values: Partial<ClipEffects>; sample: string }> = [
@@ -20,12 +24,13 @@ const EFFECTS: Array<{ name: string; description: string; values: Partial<ClipEf
   { name: 'Brighten', description: 'Lift brightness without changing framing.', values: { brightness: 1.18, contrast: 1.04, saturation: 1.04, blur: 0 }, sample: 'bright' },
 ];
 
-const FILTERS: Array<{ name: string; description: string; values: Partial<ClipEffects>; sample: string }> = [
-  { name: 'Natural', description: 'Restore the default picture controls.', values: { brightness: 1, contrast: 1, saturation: 1, blur: 0 }, sample: 'natural' },
-  { name: 'Vivid', description: 'Boost contrast and saturation.', values: { brightness: 1.04, contrast: 1.18, saturation: 1.36, blur: 0 }, sample: 'vivid' },
-  { name: 'Low contrast', description: 'Reduce contrast for a softer image.', values: { brightness: 1.04, contrast: .82, saturation: .92, blur: 0 }, sample: 'low' },
-  { name: 'Soft focus', description: 'Apply a light, adjustable blur.', values: { brightness: 1.03, contrast: .97, saturation: 1, blur: 1.6 }, sample: 'soft' },
-];
+const FILTERS = FILTER_PRESETS.map((preset) => ({
+  id: preset.id,
+  name: preset.name,
+  description: preset.description,
+  values: { ...preset.values, filterPreset: preset.id === 'original' ? undefined : preset.id, filterIntensity: 100 } as Partial<ClipEffects>,
+  sample: preset.id,
+}));
 
 const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPresetType; sample: string }> = [
   { name: 'Cross dissolve', description: 'Blend adjacent clips with a real two-source dissolve.', type: 'cross-dissolve', sample: 'fade-both' },
@@ -42,9 +47,16 @@ export default function EffectWorkspace({
   onTransition,
   onRemoveTransition,
   hasSelectedTransition = false,
+  selectedTransition = null,
+  selectedEffects,
+  thumbnail,
+  canApplyTransition = false,
 }: Props) {
   const [query, setQuery] = useState('');
   const [duration, setDuration] = useState(.6);
+  useEffect(() => {
+    if (selectedTransition) setDuration(selectedTransition.duration);
+  }, [selectedTransition?.id, selectedTransition?.duration]);
   const presets = workspace === 'effects' ? EFFECTS : workspace === 'filters' ? FILTERS : TRANSITIONS;
   const visible = useMemo(
     () => presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())),
@@ -55,9 +67,18 @@ export default function EffectWorkspace({
     if (workspace === 'transitions') {
       const transition = preset as typeof TRANSITIONS[number];
       onTransition(transition.type, duration);
+    } else if (workspace === 'filters') {
+      const filter = preset as typeof FILTERS[number];
+      onEffects(filter.values);
     } else {
       onEffects((preset as typeof EFFECTS[number]).values);
     }
+  };
+  const activeFilter = selectedEffects?.filterPreset || 'original';
+  const selectedFilterLabel = FILTER_PRESETS.find((preset) => preset.id === activeFilter)?.name || 'Original';
+  const updateTransitionDuration = (next: number) => {
+    setDuration(next);
+    if (selectedTransition) onTransition(selectedTransition.type, next);
   };
 
   return (
@@ -77,16 +98,34 @@ export default function EffectWorkspace({
       </header>
       <p className="cutline-effect-workspace__note">
         {workspace === 'transitions'
-          ? 'Select a video clip followed by another clip on the same track. The transition appears in preview and export.'
-          : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
+          ? canApplyTransition || hasSelectedTransition
+            ? 'A transition is applied between the selected adjacent clips. Choose a preset to replace it.'
+            : 'Select one of two video clips that touch on the same track to enable transitions.'
+          : workspace === 'filters'
+            ? 'Filters change the selected clip in preview and export. Use intensity to blend with the original.'
+            : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
       </p>
       {workspace === 'transitions' && <div className="cutline-transition-controls">
-        <label htmlFor="input-transition-duration">Duration <strong>{duration.toFixed(1)}s</strong></label>
-        <input id="input-transition-duration" type="range" min=".2" max="2" step=".1" value={duration} onChange={(event) => setDuration(Number(event.currentTarget.value))} aria-label="Transition duration" />
+        <label htmlFor="input-transition-duration">Transition duration <strong>{duration.toFixed(1)}s</strong></label>
+        <input id="input-transition-duration" type="range" min=".2" max="2" step=".1" value={duration} onChange={(event) => updateTransitionDuration(Number(event.currentTarget.value))} aria-label="Transition duration" disabled={!canApplyTransition && !hasSelectedTransition} />
+        {selectedTransition && <small className="cutline-transition-controls__applied">Applied · {selectedTransition.type.replaceAll('-', ' ')}</small>}
         <button type="button" className="btn flat" disabled={!hasSelectedTransition} onClick={onRemoveTransition} data-testid="button-remove-transition">Remove transition</button>
       </div>}
+      {workspace === 'filters' && <>
+        <div className="cutline-filter-workspace__active">
+          <span>Selected filter</span><strong>{selectedFilterLabel}</strong>
+        </div>
+        {activeFilter !== 'original' && <label className="cutline-filter-workspace__intensity">
+          <span>Intensity <strong>{Math.round(selectedEffects?.filterIntensity ?? 100)}%</strong></span>
+          <input type="range" min="0" max="100" step="1" value={selectedEffects?.filterIntensity ?? 100} onChange={(event) => onEffects({ filterIntensity: Number(event.currentTarget.value) })} disabled={disabled} aria-label="Filter intensity" data-testid="slider-filter-intensity" />
+        </label>}
+      </>}
       <div className="cutline-effect-workspace__list">
-        {visible.map((preset) => (
+        {visible.map((preset) => {
+          const previewValues = 'values' in preset ? preset.values as Partial<ClipEffects> : {};
+          const previewId = 'id' in preset ? preset.id : '';
+          const previewFilter = `brightness(${previewValues.brightness ?? 1}) contrast(${previewValues.contrast ?? 1}) saturate(${previewValues.saturation ?? 1}) sepia(${Math.max(0, Number(previewValues.temperature ?? 0)) / 230}) hue-rotate(${Number(previewValues.temperature ?? 0) * -.5}deg) grayscale(${previewId === 'noir' ? 1 : 0})`;
+          return (
           <button
             key={preset.name}
             type="button"
@@ -94,17 +133,20 @@ export default function EffectWorkspace({
             disabled={disabled}
             onClick={() => apply(preset)}
             title={disabled ? 'Select an unlocked video clip with an adjacent clip on the same track' : `Apply ${preset.name}`}
+            aria-pressed={workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter}
+            data-testid={workspace === 'filters' ? `button-filter-${(preset as typeof FILTERS[number]).id}` : undefined}
           >
-            <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample}`} aria-hidden="true">
-              <span />
+            <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample} ${workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter ? 'is-active' : ''}`} aria-hidden="true">
+              {thumbnail ? <img src={thumbnail} alt="" style={{ filter: previewFilter }} /> : <span />}
             </span>
             <span className="cutline-effect-card__copy">
               <strong>{preset.name}</strong>
               <small>{preset.description}</small>
             </span>
-            <span className="cutline-effect-card__apply">Apply</span>
+            <span className="cutline-effect-card__apply">{workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter ? 'Active' : workspace === 'filters' ? 'Apply' : 'Apply'}</span>
           </button>
-        ))}
+          );
+        })}
         {visible.length === 0 && <p className="cutline-effect-workspace__empty">No matching presets.</p>}
       </div>
       <p className="cutline-effect-workspace__foot">Presets change clip data; they are not applied to source files.</p>

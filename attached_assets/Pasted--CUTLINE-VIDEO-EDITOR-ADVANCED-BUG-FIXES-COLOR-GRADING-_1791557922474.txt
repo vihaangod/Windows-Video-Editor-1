@@ -1,0 +1,306 @@
+# CUTLINE VIDEO EDITOR — ADVANCED BUG FIXES, COLOR GRADING, FILTERS & DRAWING TOOLS
+
+Continue working on my existing Cutline Video Editor project. Do not rebuild the app from scratch, delete existing features, or replace the current UI with a mockup.
+
+Inspect the current code, identify the existing rendering and timeline architecture, and fix the real causes of the issues below. Preserve working functionality and existing projects.
+
+My application already has a dark interface with yellow accents, a video preview, Media Bin, timeline, Text & Titles, Clip Inspector, Transitions, and Effects workspaces.
+
+The problem is that several controls appear in the interface but do not work correctly.
+
+## 1. PROJECT STATUS COLORS
+
+The current status near the project name says "Saved on this device".
+
+Improve project status feedback:
+
+* Green indicator and "Saved" when all changes are saved.
+* Yellow or amber indicator and "Unsaved changes" immediately after an edit.
+* Green indicator again after a successful save.
+* Red indicator and a useful error message if saving fails.
+* Show "Saving..." while a save operation is in progress.
+
+Update the status automatically when text, clip positions, timing, effects, filters, transitions, or project settings change.
+
+Do not show "Saved" before the save operation actually succeeds. Preserve the current dark background and yellow accent theme.
+
+## 2. FIX TEXT THAT IS INVISIBLE OR NOT RENDERING
+
+In the current editor, I can type text in the Clip Inspector, but the displayed text is sometimes invisible or does not appear correctly in the video preview.
+
+Fix the actual text rendering pipeline.
+
+Requirements:
+
+* Typing in the Content field updates the selected text overlay immediately.
+* Display the current text in the correct position on the video canvas.
+* Ensure text color contrasts with the video.
+* Make text visible even when the default font or background is missing.
+* Fix clipping, overflow, incorrect dimensions, and incorrect coordinate calculations.
+* Ensure font size is interpreted in project-canvas coordinates rather than accidentally using CSS pixels as export pixels.
+* Correctly scale the text overlay when the preview is resized.
+* Keep text synchronized with the timeline playhead and clip duration.
+* Render text above the video rather than behind it.
+* Preserve line breaks and multiline captions.
+* Ensure text is not hidden by selection handles or overlay layers.
+
+Use the same underlying text properties for the preview and exported output.
+
+## 3. ADD A CAMERA-STYLE FILTERS WORKSPACE
+
+Create a proper Filters workspace accessible from the existing sidebar.
+
+It should contain around 10 useful filters with visual preview thumbnails and searchable names.
+
+Include these filter styles:
+
+1. Original
+2. Vivid
+3. Cinematic
+4. Cool Blue
+5. Warm
+6. Dream
+7. Pine
+8. Vintage
+9. Noir
+10. Fade
+
+Each filter must visibly change the video.
+
+Behavior:
+
+* Clicking a filter applies it to the selected video clip.
+* The preview updates immediately.
+* The active filter is highlighted.
+* Clicking Original removes the selected filter.
+* Users can adjust filter intensity from 0% to 100%.
+* Filter selection and intensity are saved with the clip.
+* Filters can be removed or reset.
+* Filter settings must carry through to export.
+
+These filters must be real image-processing presets, not just decorative cards.
+
+Use an efficient rendering approach compatible with the existing project architecture. If CSS filters are used for preview, ensure equivalent color transformations are applied during export.
+
+## 4. PROFESSIONAL COLOR CORRECTION
+
+Create a dedicated Color Adjustments section in the Clip Inspector or Effects workspace.
+
+Implement functional controls for:
+
+* Brightness.
+* Contrast.
+* Saturation.
+* Exposure, if supported.
+* Temperature.
+* Tint.
+* Highlights, if supported.
+* Shadows, if supported.
+* Fade.
+* Vignette.
+
+Requirements:
+
+* Use proper sliders and numeric values.
+* Include reset buttons.
+* Show changes immediately in the preview.
+* Allow users to combine color adjustments with filters.
+* Preserve adjustments when saving and reopening projects.
+* Ensure the exported video matches the preview as closely as possible.
+
+For example, increasing contrast must visibly increase the difference between light and dark areas. Changing temperature must make the image warmer or cooler.
+
+Do not display controls that only update numbers without changing the image.
+
+## 5. ADD A MARKUP / DRAWING TOOL
+
+I want to draw or write directly over the video, similar to annotating a screenshot.
+
+Add a dedicated Markup tool accessible from the sidebar or editing toolbar.
+
+When enabled, the user should be able to draw directly on the video preview using the mouse.
+
+### Drawing controls
+
+Include:
+
+* Pen.
+* Highlighter.
+* Arrow.
+* Straight line.
+* Rectangle.
+* Circle or ellipse.
+* Eraser.
+* Clear all drawings for the selected markup clip.
+* Undo and redo drawing actions.
+* Brush size.
+* Opacity.
+* Line style where practical.
+
+### Color selection
+
+Add a real color picker.
+
+When the user clicks the color box, open a native color-selection dialog or a proper color-picker popover.
+
+Allow:
+
+* Any custom color.
+* Hexadecimal color input.
+* Recently used colors where practical.
+* Independent stroke and fill colors where appropriate.
+
+### Drawing behavior
+
+* Entering Markup mode activates the drawing canvas.
+* The user can draw directly at the chosen location in the video preview.
+* Drawing coordinates must be converted correctly from preview coordinates to project-canvas coordinates.
+* Drawing must not accidentally move the playhead or drag the underlying video.
+* Each drawing becomes editable project data.
+* Drawings must remain attached to the correct time range.
+* Support drawing duration and timing.
+* Allow selecting and deleting an individual drawing where practical.
+* Store drawings with the project.
+* Render drawings above the video in the preview.
+* Include drawings in the final exported video.
+
+The user must be able to draw a red arrow pointing to a Minecraft player, write a note over the video, or highlight an area with a transparent colored marker.
+
+Do not implement markup as a temporary browser overlay that disappears on export.
+
+## 6. FIX TRANSITIONS COMPLETELY
+
+The current Transitions panel contains Fade Through Black and Wipe, but the interface appears disabled or transitions do not work correctly.
+
+Inspect the current transition logic.
+
+Requirements:
+
+* Make adjacent clips on the same video track eligible for transitions.
+* Provide clear instructions when clips are not eligible.
+* Enable Apply only when a valid target exists.
+* Apply must modify the actual timeline/project data.
+* Display a visible transition region at the boundary between clips.
+* Allow changing transition duration.
+* Support removal and replacement.
+* Update preview playback.
+* Include the transition in export.
+* Prevent invalid transitions from creating broken clip timing.
+* Ensure controls are not permanently disabled because of incorrect selection state.
+
+Implement and verify at least:
+
+* Cross Dissolve.
+* Fade Through Black.
+* Wipe.
+* Slide.
+
+If clips are too short for the requested duration, clamp the duration safely or show a clear validation message.
+
+Do not mark a transition as applied unless it has actually been added to the project.
+
+## 7. FIX EFFECTS AND THE EFFECTS WORKSPACE
+
+Audit every existing Effects control.
+
+Implement and verify:
+
+* Brightness.
+* Contrast.
+* Saturation.
+* Blur.
+* Sharpen, if supported.
+* Opacity.
+* Fade-in.
+* Fade-out.
+* Vignette.
+
+Each effect should have:
+
+* A working Apply action.
+* Real parameter controls.
+* Immediate preview updates.
+* Reset and remove options.
+* Persistent project data.
+* Matching export behavior.
+
+Show the active effects on the selected clip.
+
+If the current implementation uses buttons that do not modify the actual clip or rendering state, connect them to the real editing pipeline.
+
+## 8. FIX TIMELINE DURATION AND TRANSITION DURATION
+
+The transition panel currently displays a duration slider, but its value and behavior are confusing.
+
+Fix all timing controls.
+
+Requirements:
+
+* Use consistent units internally, preferably seconds.
+* Display human-readable seconds in the UI.
+* Validate numeric input.
+* Prevent NaN, negative duration, and invalid clip ranges.
+* Update the timeline and preview when duration changes.
+* Keep source in/out points valid.
+* Update the project duration when necessary.
+* Ensure a transition duration affects the actual transition.
+* Display the selected clip duration separately from the transition duration.
+* Do not allow editing controls to target the wrong clip.
+
+Make it obvious which clip or transition is selected.
+
+## 9. PREVIEW AND EXPORT MUST USE THE SAME EDITS
+
+All supported operations must use one consistent project model.
+
+The preview and final export must reflect:
+
+* Text overlays.
+* Text backgrounds.
+* Position and scale.
+* Color adjustments.
+* Filters.
+* Effects.
+* Markup drawings.
+* Transitions.
+* Audio volume and fades.
+* Clip trimming and splitting.
+
+Do not implement effects only through temporary CSS if the export pipeline cannot reproduce them.
+
+Inspect the existing rendering engine first. Reuse the current media-processing system and extend it as needed.
+
+If a feature cannot be exported correctly in the current environment, explain the limitation rather than falsely marking it complete.
+
+## 10. KEEP THE EXISTING DESIGN
+
+Maintain Cutline's charcoal background, yellow accent color, and vector icons.
+
+* Match the scrollbar theme to the rest of the app.
+* Keep the preview as large as practical.
+* Keep the Media, Audio, Text, Effects, Filters, Transitions, and Markup workspaces accessible.
+* Use compact, professional controls.
+* Make selected and active states obvious.
+* Avoid oversized sliders, overlapping labels, and text clipping.
+* Preserve responsive behavior at 1366×768 and 1920×1080.
+
+## 11. TEST REAL FUNCTIONALITY
+
+Test these operations in the existing project:
+
+1. Edit a title and confirm it appears immediately.
+2. Change its color and position.
+3. Add a background to the title.
+4. Apply Vivid and Cool Blue filters and confirm visible differences.
+5. Adjust brightness, contrast, and saturation.
+6. Draw an arrow and a rectangle over the video.
+7. Change drawing color using the color picker.
+8. Apply a transition between two adjacent clips.
+9. Change transition duration.
+10. Preview the transition during playback.
+11. Save the project, reopen it, and verify the changes remain.
+12. Export a short video and check the text, filters, color adjustments, drawings, transitions, and audio.
+
+Run build checks and fix any regressions.
+
+Prioritize working features over adding decorative UI. Inspect existing code, reuse functioning components, and report which features have actually passed testing.

@@ -1,6 +1,6 @@
 import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
+  Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
   HardDrive, Info, Layers2, LockKeyhole, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Scissors, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
@@ -15,11 +15,12 @@ import NotFound from '@/pages/not-found';
 import ContextMenu, { type ContextMenuItem } from '@/components/ContextMenu';
 import EffectWorkspace from '@/components/EffectWorkspace';
 import InspectorPanel from '@/components/InspectorPanel';
+import MarkupWorkspace from '@/components/MarkupWorkspace';
 import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTemplatesPanel';
 import {
   DEFAULT_EFFECTS, DEFAULT_TRANSFORM, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  type ClipTransform, type ClipTransition, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
+  type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
 } from '@/lib/composition';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
@@ -35,7 +36,9 @@ const DEFAULT_TRACKS: Track[] = [
   { id: 'text-1', name: 'Text 1', kind: 'text', order: 2, muted: false, visible: true, locked: false },
 ];
 const TRACK_LABEL_WIDTH = 198;
-type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'templates';
+type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup' | 'templates';
+type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
+type MarkupToolMode = MarkupTool | 'eraser';
 type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip'; id?: string; x: number; y: number };
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
   transform?: Partial<ClipTransform>;
@@ -55,6 +58,11 @@ type TextPointerDrag = {
   initialTransform: ClipTransform;
   initialProject: Project;
 };
+type MarkupPointerDrag = {
+  pointerId: number;
+  drawing: MarkupDrawing;
+  initialProject: Project;
+};
 const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactNode }> = [
   { id: 'media', label: 'Media', icon: <Film size={16} /> },
   { id: 'audio', label: 'Audio', icon: <Music2 size={16} /> },
@@ -63,12 +71,19 @@ const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactN
   { id: 'effects', label: 'Effects', icon: <WandSparkles size={16} /> },
   { id: 'transitions', label: 'Transitions', icon: <Sparkles size={16} /> },
   { id: 'filters', label: 'Filters', icon: <SlidersHorizontal size={16} /> },
+  { id: 'markup', label: 'Markup', icon: <Pencil size={16} /> },
   { id: 'templates', label: 'Templates', icon: <Grid2X2 size={16} /> },
 ];
-const createProject = (name = 'Untitled cut'): Project => ({
+const createProject = (name = 'New Project 1'): Project => ({
   id: crypto.randomUUID(), name, width: 1920, height: 1080, frameRate: 30,
   tracks: DEFAULT_TRACKS.map((track) => ({ ...track, id: crypto.randomUUID() })), clips: [],
 });
+const nextProjectName = (projects: SavedProject[]) => {
+  const names = new Set(projects.map((record) => record.project.name.trim().toLowerCase()));
+  let number = 1;
+  while (names.has(`new project ${number}`)) number += 1;
+  return `New Project ${number}`;
+};
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -363,11 +378,23 @@ function Home() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<'project' | 'export' | null>(null);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [projectSearch, setProjectSearch] = useState('');
+  const [projectSort, setProjectSort] = useState<'modified' | 'name'>('modified');
   const [projectHydrated, setProjectHydrated] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [dropActive, setDropActive] = useState(false);
-  const [saveState, setSaveState] = useState('Local project');
+  const [saveState, setSaveState] = useState<SaveState>('saving');
+  const [markupTool, setMarkupTool] = useState<MarkupToolMode>('pen');
+  const [markupColor, setMarkupColor] = useState('#ff3b30');
+  const [markupFillColor, setMarkupFillColor] = useState('#ffcc00');
+  const [markupSize, setMarkupSize] = useState(8);
+  const [markupOpacity, setMarkupOpacity] = useState(90);
+  const [markupFillOpacity, setMarkupFillOpacity] = useState(18);
+  const [markupDuration, setMarkupDuration] = useState(5);
+  const [markupLineStyle, setMarkupLineStyle] = useState<MarkupDrawing['lineStyle']>('solid');
+  const [markupNoteText, setMarkupNoteText] = useState('Look here');
+  const [markupDraft, setMarkupDraft] = useState<MarkupDrawing | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
   const [detailsDialog, setDetailsDialog] = useState<{ title: string; rows: Array<[string, string]> } | null>(null);
   const [exportName, setExportName] = useState('cutline-export');
@@ -391,6 +418,7 @@ function Home() {
   const history = useRef<Project[]>([]);
   const future = useRef<Project[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
+  const saveRevision = useRef(0);
   const trimDrag = useRef<{
     clipId: string;
     edge: 'start' | 'end';
@@ -400,6 +428,7 @@ function Home() {
     initialProject: Project;
   } | null>(null);
   const textPointerDrag = useRef<TextPointerDrag | null>(null);
+  const markupPointerDrag = useRef<MarkupPointerDrag | null>(null);
   const clipboardClip = useRef<Clip | null>(null);
   const exportCancelRequested = useRef(false);
   const isPlayingRef = useRef(false);
@@ -477,7 +506,7 @@ function Home() {
           if (!alive) return;
           setProject(latest.project);
           setAssets(localAssets);
-          setSaveState('Project reopened locally');
+          setSaveState('saved');
         }
       } catch {
         if (alive) notify('Local project storage is unavailable in this browser.', true);
@@ -491,11 +520,24 @@ function Home() {
   useEffect(() => {
     if (!projectHydrated) return;
     window.clearTimeout(saveTimer.current);
-    setSaveState('Saving locally…');
+    const revision = ++saveRevision.current;
+    setSaveState('dirty');
     saveTimer.current = window.setTimeout(() => {
+      if (revision !== saveRevision.current) return;
+      setSaveState('saving');
       saveLocalProject(project, assets)
-        .then(() => setSaveState('Saved on this device'))
-        .catch(() => { setSaveState('Save unavailable'); notify('Could not save locally. Your browser storage may be full.', true); });
+        .then(() => {
+          if (revision === saveRevision.current) {
+            setSaveState('saved');
+            void readLocalProjects().then(setSavedProjects).catch(() => undefined);
+          }
+        })
+        .catch(() => {
+          if (revision === saveRevision.current) {
+            setSaveState('error');
+            notify('Could not save locally. Check browser storage space and permissions.', true);
+          }
+        });
     }, 650);
     return () => window.clearTimeout(saveTimer.current);
   }, [project, assets, notify, projectHydrated]);
@@ -516,14 +558,18 @@ function Home() {
     return () => observer.disconnect();
   }, [project.width, project.height, previewZoom]);
 
-  const contentEnd = useMemo(() => Math.max(0, ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip))), [project.clips]);
+  const contentEnd = useMemo(() => Math.max(
+    0,
+    ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip)),
+    ...(project.markups || []).map((drawing) => drawing.end),
+  ), [project.clips, project.markups]);
   const timelineEnd = Math.max(30, contentEnd + 3);
   const scale = 16 * zoom;
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId) || null;
   const selectedTrack = selectedClip ? project.tracks.find((track) => track.id === selectedClip.trackId) : undefined;
   const selectedClipLocked = Boolean(selectedTrack?.locked);
   const selectedClipHasTransition = Boolean(selectedClip && project.transitions?.some((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id));
-  const selectedClipTransitionTarget = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
+  const nextTransitionClip = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
     ? project.clips
       .filter((clip) => {
         const asset = assets.find((item) => item.id === clip.assetId);
@@ -532,8 +578,28 @@ function Home() {
       })
       .sort((a, b) => a.timelineStart - b.timelineStart)[0]
     : undefined;
-  const canApplySelectedTransition = Boolean(selectedClip && !selectedClipLocked && selectedClipTransitionTarget &&
-    Math.abs(selectedClip.timelineStart + getClipDuration(selectedClip) - selectedClipTransitionTarget.timelineStart) <= .05);
+  const previousTransitionClip = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
+    ? project.clips
+      .filter((clip) => {
+        const asset = assets.find((item) => item.id === clip.assetId);
+        return clip.trackId === selectedClip.trackId && !clip.text && !clip.audioOnly && asset && isVideo(asset) &&
+          clip.timelineStart < selectedClip.timelineStart;
+      })
+      .sort((a, b) => b.timelineStart - a.timelineStart)[0]
+    : undefined;
+  const previousIsAdjacent = Boolean(previousTransitionClip &&
+    Math.abs(previousTransitionClip.timelineStart + getClipDuration(previousTransitionClip) - (selectedClip?.timelineStart || 0)) <= .05);
+  const nextIsAdjacent = Boolean(selectedClip && nextTransitionClip &&
+    Math.abs(selectedClip.timelineStart + getClipDuration(selectedClip) - nextTransitionClip.timelineStart) <= .05);
+  const selectedClipTransitionPair = nextIsAdjacent && selectedClip && nextTransitionClip
+    ? { fromClip: selectedClip, toClip: nextTransitionClip }
+    : previousIsAdjacent && previousTransitionClip && selectedClip
+      ? { fromClip: previousTransitionClip, toClip: selectedClip }
+      : undefined;
+  const canApplySelectedTransition = Boolean(selectedClip && !selectedClipLocked && selectedClipTransitionPair);
+  const selectedTransition = selectedClip
+    ? project.transitions?.find((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id) || null
+    : null;
   const orderedTracks = [...project.tracks].sort((a, b) => a.order - b.order);
   const activeVisualClips = useMemo(() => project.clips.filter((clip) => {
     const track = project.tracks.find((t) => t.id === clip.trackId);
@@ -654,8 +720,8 @@ function Home() {
     if (!canvas || !context) return;
     if (canvas.width !== project.width) canvas.width = project.width;
     if (canvas.height !== project.height) canvas.height = project.height;
-    renderProjectFrame(context, project, assets, previewMedia.current, playhead, playing, selectedClipId);
-  }, [project, assets, playhead, playing, mediaRevision, selectedClipId]);
+    renderProjectFrame(context, project, assets, previewMedia.current, playhead, playing, selectedClipId, markupDraft);
+  }, [project, assets, playhead, playing, mediaRevision, selectedClipId, markupDraft]);
 
   useEffect(() => {
     for (const clip of audioClips) {
@@ -1111,18 +1177,18 @@ function Home() {
     },
   });
   const applySelectedTransition = (type: ClipTransition['type'], requestedDuration: number) => {
-    if (!canApplySelectedTransition || !selectedClip || !selectedClipTransitionTarget) {
+    if (!canApplySelectedTransition || !selectedClipTransitionPair) {
       notify('Select a video clip followed immediately by another video clip on the same track.', true);
       return;
     }
     const next: ClipTransition = {
       id: uid(),
-      fromClipId: selectedClip.id,
-      toClipId: selectedClipTransitionTarget.id,
+      fromClipId: selectedClipTransitionPair.fromClip.id,
+      toClipId: selectedClipTransitionPair.toClip.id,
       type,
       duration: Math.min(
         Math.max(.1, requestedDuration),
-        Math.max(.1, Math.min(getClipDuration(selectedClip), getClipDuration(selectedClipTransitionTarget)) * 2),
+        Math.max(.1, Math.min(getClipDuration(selectedClipTransitionPair.fromClip), getClipDuration(selectedClipTransitionPair.toClip)) * 2),
       ),
     };
     commit((current) => ({
@@ -1172,33 +1238,87 @@ function Home() {
     catch { notify('Could not read projects from local browser storage.', true); }
   };
   const saveNow = async () => {
+    window.clearTimeout(saveTimer.current);
+    const revision = ++saveRevision.current;
+    setSaveState('saving');
     try {
       await saveLocalProject(project, assets);
-      setSavedProjects(await readLocalProjects()); setSaveState('Saved on this device');
+      setSavedProjects(await readLocalProjects());
+      if (revision === saveRevision.current) setSaveState('saved');
       notify('Project saved locally. Media stays on this device.');
-    } catch { notify('Save failed. Check available browser storage.', true); }
+    } catch {
+      if (revision === saveRevision.current) setSaveState('error');
+      notify('Save failed. Check browser storage space and permissions.', true);
+    }
   };
   const openProject = async (record: SavedProject) => {
     try {
       await saveLocalProject(projectRef.current, assets);
-      const localAssets = await readLocalMedia(record.project.id);
-      setSavedProjects(await readLocalProjects());
+      const records = await readLocalProjects();
+      const latestRecord = records.find((item) => item.project.id === record.project.id) || record;
+      const localAssets = await readLocalMedia(latestRecord.project.id);
+      setSavedProjects(records);
       history.current = []; future.current = [];
-      setProject(record.project); setAssets(localAssets); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
-      notify(`Opened “${record.project.name}” from local storage.`);
+      setProject(latestRecord.project); setAssets(localAssets); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
+      notify(`Opened “${latestRecord.project.name}” from local storage.`);
     } catch {
       notify('Could not save the current project or load the selected project. The current project is still open.', true);
     }
   };
   const newProject = async () => {
+    let records = savedProjects;
     try {
       await saveLocalProject(projectRef.current, assets);
-      setSavedProjects(await readLocalProjects());
+      records = await readLocalProjects();
+      setSavedProjects(records);
     } catch {
       if (!window.confirm('The current project could not be saved locally. Start a new project anyway? Recent changes may be lost.')) return;
     }
     history.current = []; future.current = [];
-    setProject(createProject(`Cut ${new Date().toLocaleDateString()}`)); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
+    setProject(createProject(nextProjectName(records))); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
+  };
+  const saveProjectAs = async () => {
+    const source = projectRef.current;
+    const suggestedName = `${source.name} copy`;
+    const requestedName = window.prompt('Save a separate copy as', suggestedName);
+    const name = requestedName?.trim();
+    if (!name) return;
+    const duplicate: Project = {
+      ...source,
+      id: uid(),
+      name,
+      tracks: source.tracks.map((track) => ({ ...track })),
+      clips: source.clips.map((clip) => ({
+        ...clip,
+        ...(clip.transform ? { transform: { ...clip.transform } } : {}),
+        ...(clip.effects ? { effects: { ...clip.effects, ...(clip.effects.enabled ? { enabled: { ...clip.effects.enabled } } : {}) } } : {}),
+        ...(clip.text ? { text: { ...clip.text, ...(clip.text.backgroundStyle ? { backgroundStyle: { ...clip.text.backgroundStyle } } : {}) } } : {}),
+      })),
+      transitions: (source.transitions || []).map((transition) => ({ ...transition })),
+      markups: (source.markups || []).map((drawing) => ({ ...drawing, points: drawing.points.map((point) => ({ ...point })) })),
+      ...(source.removedAssetIds ? { removedAssetIds: [...source.removedAssetIds] } : {}),
+    };
+    const revision = ++saveRevision.current;
+    window.clearTimeout(saveTimer.current);
+    setSaveState('saving');
+    try {
+      await saveLocalMedia(duplicate.id, assets);
+      await saveLocalProject(duplicate, assets);
+      const records = await readLocalProjects();
+      history.current = []; future.current = [];
+      setProject(duplicate);
+      setSavedProjects(records);
+      setSelectedClipId(null);
+      setSelectedAssetId(null);
+      setPlayhead(0);
+      setDialog(null);
+      if (revision === saveRevision.current) setSaveState('saved');
+      notify(`Saved “${name}” as an independent project.`);
+    } catch {
+      try { await deleteLocalProject(duplicate.id); } catch { /* keep the original project intact if cleanup fails */ }
+      if (revision === saveRevision.current) setSaveState('error');
+      notify('Save As failed. The original project is unchanged; check browser storage space and permissions.', true);
+    }
   };
   const renameProject = () => {
     const name = window.prompt('Project name', project.name);
@@ -1338,7 +1458,7 @@ function Home() {
       if (projectRef.current.id === record.project.id) {
         history.current = [];
         future.current = [];
-        setProject(createProject());
+        setProject(createProject(nextProjectName(remaining)));
         setAssets([]);
         setSelectedClipId(null);
         setSelectedAssetId(null);
@@ -1373,6 +1493,79 @@ function Home() {
       x: (event.clientX - rect.left) / Math.max(1, rect.width) * project.width,
       y: (event.clientY - rect.top) / Math.max(1, rect.height) * project.height,
     };
+  };
+  const startMarkupDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const point = getPreviewPoint(event);
+    const videoClip = [...activeVisualClips].reverse().find((clip) => {
+      const track = project.tracks.find((item) => item.id === clip.trackId);
+      const asset = assets.find((item) => item.id === clip.assetId);
+      return track?.kind === 'video' && !clip.audioOnly && asset && isVideo(asset);
+    });
+    if (!videoClip) {
+      notify('Move the playhead over a video clip before adding markup.', true);
+      return;
+    }
+    const track = project.tracks.find((item) => item.id === videoClip.trackId);
+    if (track?.locked) {
+      notify('Unlock the video track before adding markup.', true);
+      return;
+    }
+    if (markupTool === 'eraser') {
+      const candidates = project.markups || [];
+      const nearest = candidates
+        .map((drawing) => ({
+          drawing,
+          distance: Math.min(...drawing.points.map((candidate) => Math.hypot(candidate.x - point.x, candidate.y - point.y))),
+        }))
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (nearest && nearest.distance <= Math.max(22, markupSize * 2)) {
+        commit((current) => ({ ...current, markups: (current.markups || []).filter((drawing) => drawing.id !== nearest.drawing.id) }));
+      } else {
+        notify('Click close to a drawing to erase it.');
+      }
+      return;
+    }
+    const clipEnd = videoClip.timelineStart + getClipDuration(videoClip);
+    const drawing: MarkupDrawing = {
+      id: uid(),
+      tool: markupTool,
+      points: [point, point],
+      start: playhead,
+      end: Math.max(playhead + .05, Math.min(playhead + markupDuration, clipEnd)),
+      color: markupColor,
+      size: markupSize,
+      opacity: markupOpacity / 100,
+      lineStyle: markupLineStyle,
+      fillColor: markupFillColor,
+      fillOpacity: markupFillOpacity / 100,
+      ...(markupTool === 'text' ? { content: markupNoteText.trim() || 'Note' } : {}),
+    };
+    event.preventDefault();
+    if (markupTool === 'text') {
+      commit((current) => ({ ...current, markups: [...(current.markups || []), drawing] }));
+      return;
+    }
+    markupPointerDrag.current = { pointerId: event.pointerId, drawing, initialProject: projectRef.current };
+    setMarkupDraft(drawing);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveMarkupDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = markupPointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = getPreviewPoint(event);
+    const points = drag.drawing.tool === 'pen' || drag.drawing.tool === 'highlighter'
+      ? [...drag.drawing.points, point]
+      : [drag.drawing.points[0], point];
+    const updated = { ...drag.drawing, points };
+    drag.drawing = updated;
+    setMarkupDraft(updated);
+  };
+  const finishMarkupDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = markupPointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    markupPointerDrag.current = null;
+    setMarkupDraft(null);
+    commit((current) => ({ ...current, markups: [...(current.markups || []), drag.drawing] }));
   };
   const pointInPolygon = (point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>) => {
     let inside = false;
@@ -1468,6 +1661,18 @@ function Home() {
     }
     textPointerDrag.current = null;
   };
+  const startPreviewPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (libraryWorkspace === 'markup') startMarkupDrawing(event);
+    else startPreviewTextDrag(event);
+  };
+  const movePreviewPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (markupPointerDrag.current) moveMarkupDrawing(event);
+    else movePreviewTextDrag(event);
+  };
+  const finishPreviewPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (markupPointerDrag.current) finishMarkupDrawing(event);
+    else finishPreviewTextDrag(event);
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1500,7 +1705,10 @@ function Home() {
 
   const exportCut = async () => {
     if (!project.clips.length) { notify('Add a clip to the timeline before exporting.', true); return; }
-    const end = Math.max(...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip)));
+    const end = Math.max(
+      ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip)),
+      ...(project.markups || []).map((drawing) => drawing.end),
+    );
     const extension = format;
     const baseName = exportName.trim().replace(/\.(mp4|webm)$/i, '') || 'cutline-export';
     type FileWriteCommand = { type: 'write'; position: number; data: Uint8Array };
@@ -1586,7 +1794,7 @@ function Home() {
       videoSource = new CanvasSource(canvas, {
         codec: format === 'mp4' ? 'avc' : 'vp8',
         quality: new Quality({ bitrate }),
-        hardwareAcceleration: 'prefer-hardware',
+        hardwareAcceleration: 'no-preference',
       });
       output.addVideoTrack(videoSource, { frameRate: project.frameRate });
 
@@ -1763,6 +1971,14 @@ function Home() {
   const contextMenuClipAsset = contextMenuClip?.assetId ? assets.find((asset) => asset.id === contextMenuClip.assetId) : undefined;
   const contextMenuClipLocked = Boolean(contextMenuClip && project.tracks.find((track) => track.id === contextMenuClip.trackId)?.locked);
   const contextMenuProject = contextMenu?.kind === 'project' ? savedProjects.find((record) => record.project.id === contextMenu.id) : undefined;
+  const visibleSavedProjects = useMemo(() => {
+    const query = projectSearch.trim().toLowerCase();
+    return savedProjects
+      .filter((record) => record.project.name.toLowerCase().includes(query))
+      .sort((a, b) => projectSort === 'name'
+        ? a.project.name.localeCompare(b.project.name)
+        : b.savedAt - a.savedAt);
+  }, [savedProjects, projectSearch, projectSort]);
   const contextMenuItems: ContextMenuItem[] = contextMenu?.kind === 'clip' && contextMenuClip ? [
     ...(contextMenuClip.text ? [{
       label: 'Edit Text',
@@ -1851,8 +2067,14 @@ function Home() {
       }}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><Scissors size={16} strokeWidth={2.6} /></span><span>cutline</span></div>
-        <button className="project-name icon-btn" onClick={renameProject} title="Rename project" data-testid="button-rename-project">{project.name}<ChevronDown size={13} /></button>
-        <div className="save-state"><span style={{ color: saveState.includes('Saved') ? '#73bd93' : '#8f969f' }}>●</span>{saveState}</div>
+        <button className="project-name" onClick={renameProject} title="Rename project" aria-label={`Rename project ${project.name}`} data-testid="button-rename-project"><span>{project.name}</span><Pencil size={12} aria-hidden="true" /></button>
+        <div className={`save-state save-state--${saveState}`} role="status" aria-live="polite" data-testid="status-save-state">
+          <span aria-hidden="true">●</span>
+          {saveState === 'saved' ? 'Saved'
+            : saveState === 'dirty' ? 'Unsaved changes'
+              : saveState === 'saving' ? 'Saving…'
+                : 'Save failed — check browser storage'}
+        </div>
         <div className="top-spacer" />
         <button className="icon-btn" onClick={undo} disabled={!history.current.length} title="Undo (Ctrl+Z)" data-testid="button-undo"><Undo2 size={16} /></button>
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
@@ -1921,13 +2143,44 @@ function Home() {
             <EffectWorkspace
               workspace={libraryWorkspace}
               disabled={!selectedClip || selectedClipLocked ||
-                ((libraryWorkspace === 'effects' || libraryWorkspace === 'filters') && selectedAssetKind === 'audio') ||
-                (libraryWorkspace === 'transitions' && !canApplySelectedTransition && !selectedClipHasTransition)}
+                ((libraryWorkspace === 'effects' || libraryWorkspace === 'filters') && (selectedAssetKind === 'audio' || selectedAssetKind === 'text')) ||
+                (libraryWorkspace === 'transitions' && !canApplySelectedTransition)}
               onEffects={applySelectedEffect}
               onTransition={applySelectedTransition}
               onRemoveTransition={removeSelectedTransition}
               hasSelectedTransition={selectedClipHasTransition && !selectedClipLocked}
+              selectedTransition={selectedTransition}
+              selectedEffects={selectedClip?.effects}
+              thumbnail={selectedAsset?.thumbnail}
+              canApplyTransition={canApplySelectedTransition}
             />}
+          {libraryWorkspace === 'markup' && <MarkupWorkspace
+            tool={markupTool}
+            color={markupColor}
+            fillColor={markupFillColor}
+            size={markupSize}
+            opacity={markupOpacity}
+            fillOpacity={markupFillOpacity}
+            duration={markupDuration}
+            lineStyle={markupLineStyle}
+            noteText={markupNoteText}
+            drawings={project.markups || []}
+            canUndo={history.current.length > 0}
+            canRedo={future.current.length > 0}
+            onTool={setMarkupTool}
+            onColor={setMarkupColor}
+            onFillColor={setMarkupFillColor}
+            onSize={setMarkupSize}
+            onOpacity={setMarkupOpacity}
+            onFillOpacity={setMarkupFillOpacity}
+            onDuration={setMarkupDuration}
+            onLineStyle={setMarkupLineStyle}
+            onNoteText={setMarkupNoteText}
+            onUndo={undo}
+            onRedo={redo}
+            onClear={() => commit((current) => ({ ...current, markups: [] }))}
+            onRemove={(id) => commit((current) => ({ ...current, markups: (current.markups || []).filter((drawing) => drawing.id !== id) }))}
+          />}
         </aside>
         <section className="stage">
           <div className="stage-tools">
@@ -1958,13 +2211,13 @@ function Home() {
               : { width: previewZoom === '100' ? `${project.width}px` : `min(${previewZoom === 'canvas' ? '99%' : '94%'}, ${previewZoom === 'canvas' ? project.width : 1320}px)`, aspectRatio: `${project.width} / ${project.height}` }}>
               <canvas
                 ref={previewCanvasRef}
-                className="preview-canvas"
+                className={`preview-canvas${libraryWorkspace === 'markup' ? ' is-markup-active' : ''}`}
                 role="img"
                 aria-label={`Video preview at ${formatTime(playhead)}; project canvas ${project.width} by ${project.height}`}
-                onPointerDown={startPreviewTextDrag}
-                onPointerMove={movePreviewTextDrag}
-                onPointerUp={finishPreviewTextDrag}
-                onPointerCancel={finishPreviewTextDrag}
+                onPointerDown={startPreviewPointer}
+                onPointerMove={movePreviewPointer}
+                onPointerUp={finishPreviewPointer}
+                onPointerCancel={finishPreviewPointer}
                 onDoubleClick={() => document.querySelector<HTMLElement>('[data-testid="input-title-content"]')?.focus()}
                 data-testid="canvas-video-preview"
               />
@@ -2049,6 +2302,30 @@ function Home() {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setPlayhead(Math.max(0, (event.clientX - rect.left) / scale));
                 }} data-testid={`lane-track-${track.id}`}>
+                  {(project.transitions || []).filter((transition) => {
+                    const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
+                    return fromClip?.trackId === track.id;
+                  }).map((transition) => {
+                    const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
+                    const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
+                    if (!fromClip || !toClip) return null;
+                    const boundary = fromClip.timelineStart + getClipDuration(fromClip);
+                    return <button
+                      key={transition.id}
+                      type="button"
+                      className={`transition-region${selectedClipId === fromClip.id || selectedClipId === toClip.id ? ' is-selected' : ''}`}
+                      style={{ left: Math.max(0, (boundary - transition.duration / 2) * scale), width: Math.max(9, transition.duration * scale) }}
+                      title={`${transition.type.replaceAll('-', ' ')} · ${transition.duration.toFixed(1)} seconds`}
+                      aria-label={`${transition.type.replaceAll('-', ' ')} transition, ${transition.duration.toFixed(1)} seconds`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedClipId(fromClip.id);
+                        setSelectedAssetId(fromClip.assetId || null);
+                        setLibraryWorkspace('transitions');
+                      }}
+                      data-testid={`transition-region-${transition.id}`}
+                    ><Sparkles size={10} /></button>;
+                  })}
                   {project.clips.filter((clip) => clip.trackId === track.id).map((clip) => {
                     const asset = assets.find((item) => item.id === clip.assetId);
                     if (!asset && !clip.text) return null;
@@ -2130,14 +2407,43 @@ function Home() {
       </section>
       {notice && <div className={`notice ${notice.error ? 'error' : ''}`} role="status" data-testid="status-notice">{notice.error ? <CircleAlert size={16} /> : <Check size={16} />}{notice.message}</div>}
       {dialog === 'project' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null); }}>
-        <section className="dialog" aria-label="Local projects">
+        <section className="dialog project-library" role="dialog" aria-modal="true" aria-label="Local projects">
           <h2>Projects on this device</h2><p>Your project files and imported media are stored in this browser only.</p>
-          <button className="btn primary" onClick={newProject} data-testid="button-new-project"><FilePlus2 size={14} />New project</button>
-          <div style={{ marginTop: 14, maxHeight: 280, overflow: 'auto' }}>
-            {savedProjects.length ? [...savedProjects].sort((a, b) => b.savedAt - a.savedAt).map((record) => <button key={record.project.id} className="asset-row" style={{ width: '100%' }} onClick={() => void openProject(record)} onContextMenu={(event) => openContextMenu(event, 'project', record.project.id)} onKeyDown={(event) => openKeyboardContextMenu(event, 'project', record.project.id)} data-testid={`button-open-saved-${record.project.id}`}>
-              <span className="asset-thumb"><Clapperboard size={16} /></span><span className="asset-details"><span className="asset-name">{record.project.name}</span><span className="asset-meta">{record.project.clips.length} clips · {new Date(record.savedAt).toLocaleString()}</span></span>
-              {record.project.id === project.id && <Check size={15} color="#edb94e" />}
-            </button>) : <div className="library-foot" style={{ padding: 14 }}>No saved projects yet. The current project autosaves locally.</div>}
+          <div className="project-library__actions">
+            <button className="btn primary" onClick={() => void newProject()} data-testid="button-new-project"><FilePlus2 size={14} />New project</button>
+            <button className="btn" onClick={() => void saveProjectAs()} data-testid="button-save-project-as"><Copy size={14} />Save As</button>
+          </div>
+          <div className="project-library__tools">
+            <label className="search-box"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>
+            <label className="project-library__sort"><span>Sort</span><select aria-label="Sort projects" value={projectSort} onChange={(event) => setProjectSort(event.currentTarget.value as 'modified' | 'name')} data-testid="select-sort-projects"><option value="modified">Recently modified</option><option value="name">Name</option></select></label>
+          </div>
+          <div className="project-library__list">
+            {visibleSavedProjects.length ? visibleSavedProjects.map((record) => {
+              const currentProject = record.project.id === project.id ? project : record.project;
+              const currentStatus = record.project.id === project.id ? saveState : 'saved';
+              return <article
+                key={record.project.id}
+                className={`project-library__row${record.project.id === project.id ? ' is-current' : ''}`}
+                onContextMenu={(event) => openContextMenu(event, 'project', record.project.id)}
+                onKeyDown={(event) => openKeyboardContextMenu(event, 'project', record.project.id)}
+                tabIndex={0}
+                aria-label={`Project ${currentProject.name}`}
+                data-testid={`row-project-${record.project.id}`}
+              >
+                <span className="project-library__icon"><Clapperboard size={16} /></span>
+                <div className="project-library__details">
+                  <button type="button" className="project-library__open" onClick={() => void openProject(record)} data-testid={`button-open-saved-${record.project.id}`}>{currentProject.name}</button>
+                  <span>{new Date(record.savedAt).toLocaleString()} · {currentProject.width} × {currentProject.height} · {currentProject.frameRate} fps · {currentProject.clips.length} clips</span>
+                  <small className={`project-library__status project-library__status--${currentStatus}`}><i />{currentStatus === 'saved' ? 'Saved' : currentStatus === 'saving' ? 'Saving…' : currentStatus === 'dirty' ? 'Unsaved changes' : 'Save failed'}</small>
+                </div>
+                <div className="project-library__row-actions">
+                  <button type="button" title="Open project" aria-label={`Open ${currentProject.name}`} onClick={() => void openProject(record)}><FolderOpen size={13} /></button>
+                  <button type="button" title="Rename project" aria-label={`Rename ${currentProject.name}`} onClick={() => void renameSavedProject(record)}><Pencil size={13} /></button>
+                  <button type="button" title="Duplicate project" aria-label={`Duplicate ${currentProject.name}`} onClick={() => void duplicateSavedProject(record)}><Copy size={13} /></button>
+                  <button type="button" title="Delete project" aria-label={`Delete ${currentProject.name}`} onClick={() => void deleteSavedProject(record)}><Trash2 size={13} /></button>
+                </div>
+              </article>;
+            }) : <div className="project-library__empty">{savedProjects.length ? 'No projects match your search.' : 'No saved projects yet. The current project autosaves locally.'}</div>}
           </div>
           <div className="dialog-actions"><button className="btn" onClick={() => setDialog(null)} data-testid="button-close-projects">Close</button></div>
         </section>

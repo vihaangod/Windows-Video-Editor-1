@@ -25,7 +25,31 @@ export type ClipEffects = {
   contrast: number;
   saturation: number;
   blur: number;
+  exposure: number;
+  temperature: number;
+  tint: number;
+  fade: number;
+  vignette: number;
+  filterPreset?: string;
+  filterIntensity?: number;
   enabled?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'blur', boolean>>;
+};
+
+export type MarkupTool = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'text';
+export type MarkupPoint = { x: number; y: number };
+export type MarkupDrawing = {
+  id: string;
+  tool: MarkupTool;
+  points: MarkupPoint[];
+  start: number;
+  end: number;
+  color: string;
+  size: number;
+  opacity: number;
+  lineStyle: 'solid' | 'dashed' | 'dotted';
+  fillColor?: string;
+  fillOpacity?: number;
+  content?: string;
 };
 
 export type TextBackgroundStyle = {
@@ -91,6 +115,7 @@ export type Project = {
   clips: Clip[];
   transitions?: ClipTransition[];
   removedAssetIds?: string[];
+  markups?: MarkupDrawing[];
 };
 
 export type ClipTransition = {
@@ -132,8 +157,96 @@ export const DEFAULT_EFFECTS: ClipEffects = {
   contrast: 1,
   saturation: 1,
   blur: 0,
+  exposure: 0,
+  temperature: 0,
+  tint: 0,
+  fade: 0,
+  vignette: 0,
   enabled: { brightness: true, contrast: true, saturation: true, blur: true },
 };
+
+export const FILTER_PRESETS = [
+  { id: 'original', name: 'Original', description: 'No filter; keep the source colors.', values: { brightness: 1, contrast: 1, saturation: 1, temperature: 0, tint: 0, fade: 0, vignette: 0 } },
+  { id: 'vivid', name: 'Vivid', description: 'Punchier color and contrast for gameplay.', values: { brightness: 1.04, contrast: 1.2, saturation: 1.38, temperature: 0, tint: 0, fade: 0, vignette: 0 } },
+  { id: 'cinematic', name: 'Cinematic', description: 'Cool shadows, softer color, and a subtle vignette.', values: { brightness: .97, contrast: 1.18, saturation: .84, temperature: -7, tint: 3, fade: .05, vignette: .24 } },
+  { id: 'cool-blue', name: 'Cool Blue', description: 'Shift the image toward a crisp blue tone.', values: { brightness: 1, contrast: 1.08, saturation: 1.08, temperature: -36, tint: -3, fade: 0, vignette: 0 } },
+  { id: 'warm', name: 'Warm', description: 'Add a golden warmth to the image.', values: { brightness: 1.03, contrast: 1.04, saturation: 1.12, temperature: 34, tint: 2, fade: 0, vignette: 0 } },
+  { id: 'dream', name: 'Dream', description: 'Lifted highlights with soft contrast and color.', values: { brightness: 1.12, contrast: .88, saturation: 1.06, temperature: 12, tint: 5, fade: .16, vignette: .08 } },
+  { id: 'pine', name: 'Pine', description: 'Cool, forest-toned color with deeper contrast.', values: { brightness: .98, contrast: 1.16, saturation: .9, temperature: -12, tint: -8, fade: 0, vignette: .12 } },
+  { id: 'vintage', name: 'Vintage', description: 'Muted color, lifted blacks, and a warm finish.', values: { brightness: 1.04, contrast: .86, saturation: .72, temperature: 20, tint: 7, fade: .2, vignette: .18 } },
+  { id: 'noir', name: 'Noir', description: 'Monochrome with stronger contrast and edge falloff.', values: { brightness: 1.02, contrast: 1.32, saturation: 0, temperature: 0, tint: 0, fade: 0, vignette: .28 } },
+  { id: 'fade', name: 'Fade', description: 'Lower contrast and gently lift dark tones.', values: { brightness: 1.06, contrast: .82, saturation: .88, temperature: 0, tint: 0, fade: .28, vignette: 0 } },
+] as const;
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function interpolate(from: number, to: number, amount: number) {
+  return from + (to - from) * amount;
+}
+
+function getRenderedEffects(clip: Clip) {
+  const base = { ...DEFAULT_EFFECTS, ...clip.effects };
+  const preset = FILTER_PRESETS.find((item) => item.id === base.filterPreset);
+  const amount = preset ? clamp01((base.filterIntensity ?? 100) / 100) : 0;
+  const values = preset?.values ?? FILTER_PRESETS[0].values;
+  return {
+    brightness: (base.enabled?.brightness === false ? 1 : base.brightness) *
+      interpolate(1, values.brightness, amount) * 2 ** Math.max(-4, Math.min(4, base.exposure)),
+    contrast: (base.enabled?.contrast === false ? 1 : base.contrast) * interpolate(1, values.contrast, amount) *
+      Math.max(.05, 1 - Math.max(0, base.fade) * .25),
+    saturation: (base.enabled?.saturation === false ? 1 : base.saturation) * interpolate(1, values.saturation, amount),
+    blur: base.enabled?.blur === false ? 0 : base.blur,
+    temperature: Math.max(-100, Math.min(100, base.temperature + values.temperature * amount)),
+    tint: Math.max(-100, Math.min(100, base.tint + values.tint * amount)),
+    fade: clamp01(1 - (1 - clamp01(base.fade)) * (1 - values.fade * amount)),
+    vignette: clamp01(1 - (1 - clamp01(base.vignette)) * (1 - values.vignette * amount)),
+  };
+}
+
+function drawColorOverlays(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  effects: ReturnType<typeof getRenderedEffects>,
+) {
+  if (effects.temperature) {
+    context.save();
+    context.globalCompositeOperation = 'soft-light';
+    context.globalAlpha = Math.min(.24, Math.abs(effects.temperature) / 500);
+    context.fillStyle = effects.temperature > 0 ? '#ff923f' : '#398de0';
+    context.fillRect(-width / 2, -height / 2, width, height);
+    context.restore();
+  }
+  if (effects.tint) {
+    context.save();
+    context.globalCompositeOperation = 'soft-light';
+    context.globalAlpha = Math.min(.2, Math.abs(effects.tint) / 500);
+    context.fillStyle = effects.tint > 0 ? '#d040b7' : '#48bf82';
+    context.fillRect(-width / 2, -height / 2, width, height);
+    context.restore();
+  }
+  if (effects.fade > 0) {
+    context.save();
+    context.globalCompositeOperation = 'screen';
+    context.globalAlpha = effects.fade * .18;
+    context.fillStyle = '#fff';
+    context.fillRect(-width / 2, -height / 2, width, height);
+    context.restore();
+  }
+  if (effects.vignette > 0) {
+    context.save();
+    const radius = Math.hypot(width, height) * .62;
+    const gradient = context.createRadialGradient(0, 0, radius * .2, 0, 0, radius);
+    gradient.addColorStop(0, 'rgba(0,0,0,0)');
+    gradient.addColorStop(.58, `rgba(0,0,0,${effects.vignette * .16})`);
+    gradient.addColorStop(1, `rgba(0,0,0,${effects.vignette * .76})`);
+    context.fillStyle = gradient;
+    context.fillRect(-width / 2, -height / 2, width, height);
+    context.restore();
+  }
+}
 
 export function getClipDuration(clip: Clip): number {
   return Math.max(0, (clip.sourceOut - clip.sourceIn) / Math.max(.1, clip.speed));
@@ -159,13 +272,13 @@ function drawText(
   if (!text) return;
   const layout = getTextLayout(context, text, project);
   const transform = { ...DEFAULT_TRANSFORM, ...clip.transform };
-  const effects = { ...DEFAULT_EFFECTS, ...clip.effects };
+  const effects = getRenderedEffects(clip);
   context.save();
   context.translate(project.width / 2 + transform.x, project.height / 2 + transform.y);
   context.rotate(transform.rotation * Math.PI / 180);
   context.scale(transform.scale, transform.scale);
   context.globalAlpha = Math.max(0, Math.min(1, (clip.opacity ?? 1) * text.opacity * getClipFade(clip, time)));
-  context.filter = `brightness(${effects.enabled?.brightness === false ? 1 : effects.brightness}) contrast(${effects.enabled?.contrast === false ? 1 : effects.contrast}) saturate(${effects.enabled?.saturation === false ? 1 : effects.saturation}) blur(${effects.enabled?.blur === false ? 0 : effects.blur}px)`;
+  context.filter = `brightness(${effects.brightness}) contrast(${effects.contrast}) saturate(${effects.saturation}) blur(${effects.blur}px)`;
 
   const { fontSize, lineHeight, lines, x, firstY, background } = layout;
   context.font = `${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
@@ -377,7 +490,7 @@ function drawMedia(
   }
 
   const transform = { ...DEFAULT_TRANSFORM, ...clip.transform };
-  const effects = { ...DEFAULT_EFFECTS, ...clip.effects };
+  const effects = getRenderedEffects(clip);
   const fitScale = transform.fit === 'cover'
     ? Math.max(project.width / sourceWidth, project.height / sourceHeight)
     : Math.min(project.width / sourceWidth, project.height / sourceHeight);
@@ -389,8 +502,91 @@ function drawMedia(
   context.rotate(transform.rotation * Math.PI / 180);
   context.scale(transform.scale * (options.scaleMultiplier ?? 1), transform.scale * (options.scaleMultiplier ?? 1));
   context.globalAlpha *= Math.max(0, Math.min(1, (clip.opacity ?? 1) * (options.fade === false ? 1 : getClipFade(clip, time)) * (options.alpha ?? 1)));
-  context.filter = `brightness(${effects.enabled?.brightness === false ? 1 : effects.brightness}) contrast(${effects.enabled?.contrast === false ? 1 : effects.contrast}) saturate(${effects.enabled?.saturation === false ? 1 : effects.saturation}) blur(${effects.enabled?.blur === false ? 0 : effects.blur}px)`;
-  context.drawImage(source, -transform.anchorX * drawWidth, -transform.anchorY * drawHeight, drawWidth, drawHeight);
+  context.filter = `brightness(${effects.brightness}) contrast(${effects.contrast}) saturate(${effects.saturation}) blur(${effects.blur}px)`;
+  const left = -transform.anchorX * drawWidth;
+  const top = -transform.anchorY * drawHeight;
+  context.beginPath();
+  context.rect(left, top, drawWidth, drawHeight);
+  context.clip();
+  context.drawImage(source, left, top, drawWidth, drawHeight);
+  context.filter = 'none';
+  context.translate(left + drawWidth / 2, top + drawHeight / 2);
+  drawColorOverlays(context, drawWidth, drawHeight, effects);
+  context.restore();
+}
+
+function drawMarkup(context: CanvasRenderingContext2D, drawing: MarkupDrawing) {
+  if (!drawing.points.length) return;
+  const first = drawing.points[0];
+  const last = drawing.points[drawing.points.length - 1];
+  context.save();
+  context.globalAlpha = clamp01(drawing.opacity);
+  context.strokeStyle = drawing.color;
+  context.fillStyle = drawing.fillColor || drawing.color;
+  context.lineWidth = Math.max(1, drawing.size);
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.setLineDash(drawing.lineStyle === 'dashed' ? [drawing.size * 2.5, drawing.size * 1.5] : drawing.lineStyle === 'dotted' ? [drawing.size * .25, drawing.size * 1.5] : []);
+  if (drawing.tool === 'highlighter') {
+    context.globalAlpha *= .34;
+    context.lineWidth *= 3.2;
+    context.globalCompositeOperation = 'multiply';
+  }
+  if (drawing.tool === 'text') {
+    context.font = `700 ${Math.max(12, drawing.size * 4)}px "Segoe UI", sans-serif`;
+    context.shadowColor = 'rgba(0,0,0,.8)';
+    context.shadowBlur = Math.max(2, drawing.size * .35);
+    context.fillText(drawing.content || 'Note', first.x, first.y, 900);
+    context.restore();
+    return;
+  }
+  context.beginPath();
+  if (drawing.tool === 'pen' || drawing.tool === 'highlighter') {
+    context.moveTo(first.x, first.y);
+    drawing.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+    context.stroke();
+    context.restore();
+    return;
+  }
+  if (drawing.tool === 'line' || drawing.tool === 'arrow') {
+    context.moveTo(first.x, first.y);
+    context.lineTo(last.x, last.y);
+    context.stroke();
+    if (drawing.tool === 'arrow') {
+      const angle = Math.atan2(last.y - first.y, last.x - first.x);
+      const head = Math.max(12, drawing.size * 3.5);
+      context.beginPath();
+      context.moveTo(last.x, last.y);
+      context.lineTo(last.x - head * Math.cos(angle - Math.PI / 6), last.y - head * Math.sin(angle - Math.PI / 6));
+      context.moveTo(last.x, last.y);
+      context.lineTo(last.x - head * Math.cos(angle + Math.PI / 6), last.y - head * Math.sin(angle + Math.PI / 6));
+      context.stroke();
+    }
+    context.restore();
+    return;
+  }
+  const x = Math.min(first.x, last.x);
+  const y = Math.min(first.y, last.y);
+  const width = Math.abs(last.x - first.x);
+  const height = Math.abs(last.y - first.y);
+  if (drawing.tool === 'rectangle') {
+    if (drawing.fillColor && (drawing.fillOpacity ?? 0) > 0) {
+      context.save();
+      context.globalAlpha *= clamp01(drawing.fillOpacity ?? 0);
+      context.fillRect(x, y, width, height);
+      context.restore();
+    }
+    context.strokeRect(x, y, width, height);
+  } else if (drawing.tool === 'ellipse') {
+    context.ellipse(x + width / 2, y + height / 2, Math.max(.5, width / 2), Math.max(.5, height / 2), 0, 0, Math.PI * 2);
+    if (drawing.fillColor && (drawing.fillOpacity ?? 0) > 0) {
+      context.save();
+      context.globalAlpha *= clamp01(drawing.fillOpacity ?? 0);
+      context.fill();
+      context.restore();
+    }
+    context.stroke();
+  }
   context.restore();
 }
 
@@ -402,6 +598,7 @@ export function renderProjectFrame(
   time: number,
   playing: boolean,
   selectedClipId?: string | null,
+  markupDraft?: MarkupDrawing | null,
 ) {
   context.save();
   context.filter = 'none';
@@ -417,7 +614,7 @@ export function renderProjectFrame(
   const activeTransitions = (project.transitions || []).flatMap((transition) => {
     const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
     const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
-    if (!fromClip || !toClip || fromClip.assetId === toClip.assetId) return [];
+    if (!fromClip || !toClip) return [];
     const fromEnd = fromClip.timelineStart + getClipDuration(fromClip);
     if (Math.abs(fromEnd - toClip.timelineStart) > .05) return [];
     const boundary = (fromEnd + toClip.timelineStart) / 2;
@@ -430,6 +627,7 @@ export function renderProjectFrame(
   const transitionClipIds = new Set(activeTransitions.flatMap(({ fromClip, toClip }) => [fromClip.id, toClip.id]));
   const transitionForClip = new Map(activeTransitions.flatMap((active) => [[active.fromClip.id, active], [active.toClip.id, active]]));
   const renderClips = [...new Map([...activeVisual, ...activeTransitions.flatMap(({ fromClip, toClip }) => [fromClip, toClip])].map((clip) => [clip.id, clip])).values()].sort((a, b) => {
+    if (Boolean(a.text) !== Boolean(b.text)) return a.text ? 1 : -1;
     const orderA = project.tracks.find((track) => track.id === a.trackId)?.order ?? 0;
     const orderB = project.tracks.find((track) => track.id === b.trackId)?.order ?? 0;
     return orderA - orderB || a.timelineStart - b.timelineStart;
@@ -498,6 +696,10 @@ export function renderProjectFrame(
     const source = mediaByAsset.get(clip.assetId);
     if (asset && source) drawMedia(context, clip, asset, source, time, project, playing);
   }
+
+  [...(project.markups || []), ...(markupDraft ? [markupDraft] : [])]
+    .filter((drawing) => time >= drawing.start && time < drawing.end)
+    .forEach((drawing) => drawMarkup(context, drawing));
 
   if (selectedClipId) {
     const selected = renderClips.find((clip) => clip.id === selectedClipId && clip.text);

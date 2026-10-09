@@ -419,12 +419,28 @@ export default function InspectorPanel({
       {assetKind !== 'audio' && <section className="cutline-inspector__section" aria-labelledby="inspector-effects-heading">
         <div className="cutline-inspector__section-title">
           <h2 id="inspector-effects-heading">Effects</h2>
-          <button type="button" className="cutline-inspector__reset-effects" disabled={disabled} onClick={() => onChange({ effects: { ...DEFAULT_EFFECTS } })} data-testid="button-reset-effects">Reset</button>
+          <button type="button" className="cutline-inspector__reset-effects" disabled={disabled} onClick={() => onChange({ effects: { ...DEFAULT_EFFECTS, filterPreset: undefined, filterIntensity: 100 } })} data-testid="button-reset-effects">Reset</button>
         </div>
         <div className="cutline-inspector__effect-control">{effectToggle('Brightness', 'brightness')}{rangeControl('Brightness', 'slider-effect-brightness', effects.brightness, 0, 2, .05, (value) => onChange({ effects: { brightness: value } }))}</div>
         <div className="cutline-inspector__effect-control">{effectToggle('Contrast', 'contrast')}{rangeControl('Contrast', 'slider-effect-contrast', effects.contrast, 0, 2, .05, (value) => onChange({ effects: { contrast: value } }))}</div>
         <div className="cutline-inspector__effect-control">{effectToggle('Saturation', 'saturation')}{rangeControl('Saturation', 'slider-effect-saturation', effects.saturation, 0, 2, .05, (value) => onChange({ effects: { saturation: value } }))}</div>
         <div className="cutline-inspector__effect-control">{effectToggle('Blur', 'blur')}{rangeControl('Blur', 'slider-effect-blur', effects.blur, 0, 20, .25, (value) => onChange({ effects: { blur: value } }), 'px')}</div>
+      </section>}
+
+      {(assetKind === 'video' || assetKind === 'image') && <section className="cutline-inspector__section" aria-labelledby="inspector-color-heading">
+        <div className="cutline-inspector__section-title">
+          <h2 id="inspector-color-heading">Color adjustments</h2>
+          <button type="button" className="cutline-inspector__reset-effects" disabled={disabled} onClick={() => onChange({ effects: {
+            ...DEFAULT_EFFECTS,
+            filterPreset: undefined,
+            filterIntensity: 100,
+          } })} data-testid="button-reset-color">Reset color</button>
+        </div>
+        {rangeControl('Exposure', 'slider-color-exposure', effects.exposure, -2, 2, .05, (value) => onChange({ effects: { exposure: value } }), ' EV')}
+        {rangeControl('Temperature', 'slider-color-temperature', effects.temperature, -100, 100, 1, (value) => onChange({ effects: { temperature: value } }))}
+        {rangeControl('Tint', 'slider-color-tint', effects.tint, -100, 100, 1, (value) => onChange({ effects: { tint: value } }))}
+        {rangeControl('Fade', 'slider-color-fade', effects.fade * 100, 0, 100, 1, (value) => onChange({ effects: { fade: value / 100 } }), '%')}
+        {rangeControl('Vignette', 'slider-color-vignette', effects.vignette * 100, 0, 100, 1, (value) => onChange({ effects: { vignette: value / 100 } }), '%')}
       </section>}
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-fade-heading">

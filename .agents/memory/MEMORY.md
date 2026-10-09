@@ -1,1 +1,2 @@
 - [Cutline product constraints](cutline-product-constraints.md) — keep the editor local-first and usable on low-spec Windows PCs.
+- [WebCodecs fallback](webcodecs-encoder-selection.md) — leave hardware acceleration at no preference so unsupported GPUs can fall back to software encoding.
