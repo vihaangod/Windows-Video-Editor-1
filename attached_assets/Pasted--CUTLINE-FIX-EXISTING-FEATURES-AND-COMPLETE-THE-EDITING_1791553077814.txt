@@ -1,0 +1,284 @@
+# CUTLINE — FIX EXISTING FEATURES AND COMPLETE THE EDITING WORKFLOW
+
+Continue working on the existing Cutline Video Editor project. The application already has a Media panel, video preview, timeline, Audio 1, Text 1, title templates, a Clip Inspector, playback controls, and basic project controls.
+
+Do not rebuild the project or redesign everything from scratch. Inspect the current source code, identify which features are implemented, and fix the existing implementation. Preserve working features and user projects.
+
+The current problem is that many controls appear in the UI but do not work reliably. Focus on real functionality, not just appearance.
+
+## 1. MAKE THE VIDEO PREVIEW LARGER
+
+The video preview currently appears too small inside the available central workspace.
+
+* Increase the preview's usable width and height.
+* Use the available central workspace efficiently without unnecessarily shrinking the Media panel or Clip Inspector.
+* Keep the video centered and scale it proportionally.
+* Preserve the entire source frame by default.
+* Never stretch or accidentally crop the video.
+* Support 16:9, 9:16, 1:1, and other aspect ratios.
+* Allow the preview workspace to resize with the browser window.
+* Add useful Fit, 100%, and Fit to Canvas preview controls where appropriate.
+* Separate preview zoom from the actual clip scale.
+* Keep playback controls accessible below the preview.
+
+The preview should be as large as practical within the current layout, especially on a 1920×1080 desktop display. It must remain usable at 1366×768.
+
+## 2. AUDIO MUST PLAY CORRECTLY
+
+When I press Play, the video's audio must play whenever the source contains audio.
+
+Inspect the actual playback implementation:
+
+* Check whether the browser video element is muted accidentally.
+* Ensure playback controls update the correct video/audio sources.
+* Respect master volume and clip gain.
+* Make sure the volume slider changes actual playback volume.
+* Make sure the mute button really mutes and unmutes the audio.
+* Check that the browser is not playing duplicate audio sources.
+* Synchronize audio and video when clips are moved or trimmed.
+* Support audio clips on Audio 1 and additional audio tracks.
+* Make sure playback follows the timeline arrangement.
+* Preserve audio in the final export.
+
+Browser autoplay restrictions must be handled correctly. Start audio after the user's Play interaction when necessary.
+
+If a source contains no audio, display that clearly rather than silently pretending an audio track exists.
+
+## 3. TEXT CLIPS MUST BE EDITABLE
+
+Currently, I can add a subtitle template, and it appears over the video, but editing the actual text is confusing.
+
+Implement proper text-clip selection and editing.
+
+When I click a text clip on Text 1:
+
+* Select that specific text clip.
+* Highlight it on the timeline.
+* Show its actual properties in the Clip Inspector.
+* Display an Edit Text button or an editable text field.
+* Allow changing the text content.
+* Allow changing the font family, font size, weight, alignment, and color.
+* Allow outline, shadow, background, opacity, and positioning controls.
+* Update the video preview immediately.
+* Preserve the changes after saving and reopening the project.
+
+When I double-click a text clip, open a text-editing dialog or activate an inline text editor.
+
+Provide a right-click context menu on text clips containing:
+
+* Edit Text
+* Rename Clip
+* Duplicate
+* Copy
+* Paste, where appropriate
+* Split at Playhead
+* Delete
+* Duration and timing options
+
+The context menu must operate on the selected text clip, not the underlying video clip.
+
+Do not confuse renaming the timeline clip with editing its displayed text.
+
+## 4. DIRECTLY MOVE TEXT ON THE VIDEO CANVAS
+
+I want to position text anywhere inside the video preview, just like professional video editors.
+
+Implement direct manipulation:
+
+* Clicking the visible text selects its corresponding text clip.
+* Show a selection outline and transform handles when selected.
+* Drag the text with the mouse to move it.
+* Support positioning anywhere within the project canvas.
+* Add resize handles where practical.
+* Add rotation controls where practical.
+* Show accurate Position X and Position Y values in the Clip Inspector.
+* Keep text inside the canvas when requested, while allowing intentional off-canvas positioning if supported.
+* Provide a Reset Position action.
+* Update the preview during dragging.
+* Save the final position in the project data.
+* Render the same position in the exported video.
+
+Dragging text must not accidentally seek the timeline or move an unrelated clip.
+
+## 5. TEXT BACKGROUNDS
+
+Add a dedicated Text Background section in the text inspector.
+
+Provide:
+
+* Background enabled/disabled.
+* Background color.
+* Background opacity.
+* Padding.
+* Corner radius.
+* Background width and height or automatic sizing.
+* Horizontal and vertical alignment.
+* Optional border.
+* Independent text and background positioning where practical.
+
+Include useful presets such as:
+
+* Black translucent subtitle background.
+* Solid background.
+* Rounded caption box.
+* No background.
+* Custom color.
+
+Text and its background must render together in the preview and export.
+
+## 6. FIX CUTTING, SPLITTING AND TRIMMING
+
+The editing toolbar currently contains controls that appear incomplete or nonfunctional.
+
+Implement a working Split at Playhead action:
+
+* Select a clip.
+* Move the playhead to the desired time.
+* Split the clip into two independent timeline segments.
+* Preserve the correct source in/out points.
+* Preserve video/audio synchronization.
+* Preserve applicable effects and transforms.
+* Update the timeline immediately.
+
+Also implement:
+
+* Trim left edge.
+* Trim right edge.
+* Delete selected clip.
+* Ripple delete where appropriate.
+* Duplicate clip.
+* Undo and redo.
+* Keyboard shortcut for splitting.
+* Disabled states when an action is unavailable.
+
+Do not confuse splitting a clip with deleting a section of the source file. Normal editing should remain non-destructive.
+
+## 7. MAKE EFFECTS ACTUALLY WORK
+
+The Effects workspace and toolbar controls must perform actual editing operations.
+
+Implement and verify:
+
+* Brightness.
+* Contrast.
+* Saturation.
+* Exposure, if supported.
+* Blur.
+* Sharpen, if supported.
+* Opacity.
+* Basic color correction.
+* Fade-in and fade-out.
+
+When a clip is selected:
+
+* Applying an effect adds it to that clip's effect stack.
+* Effect parameters appear in the Clip Inspector.
+* Adjusting a parameter updates the preview.
+* The effect can be enabled, disabled, reordered where supported, and removed.
+* Undo and redo restore the correct state.
+* Export uses the same effect settings.
+
+For example, changing Contrast from 100% to 150% must visibly change the video, not just the displayed number.
+
+If an effect is unsupported by the existing rendering engine, do not present it as fully functional.
+
+## 8. IMPLEMENT WORKING TRANSITIONS
+
+Provide real transitions between adjacent clips.
+
+Start with:
+
+* Cross dissolve.
+* Fade through black.
+* Wipe.
+* Slide.
+* Zoom transition where feasible.
+
+Users must be able to apply, adjust duration, preview, and remove transitions.
+
+Transitions must work across the actual clip boundary and render correctly during export. Do not create a transition button that merely changes color when clicked.
+
+## 9. CUSTOM MEDIA AND TEXT CONTEXT MENUS
+
+Use a consistent custom context menu for Media Bin items and timeline clips.
+
+Media items should support:
+
+* Rename.
+* Duplicate.
+* Add to Timeline.
+* Media Properties.
+* Remove from Project.
+
+Text clips should support:
+
+* Edit Text.
+* Rename Clip.
+* Duplicate.
+* Split at Playhead.
+* Delete.
+
+Video clips should support:
+
+* Rename.
+* Duplicate.
+* Split at Playhead.
+* Copy/Paste.
+* Remove from Timeline.
+* Clip Properties.
+
+Different item types must have the correct actions. Do not delete original media files when removing a media reference from a project.
+
+## 10. FIX THE SCROLLBAR THEME
+
+The browser scrollbars currently look inconsistent with the dark Cutline theme.
+
+Style scrollbars throughout the application to match the existing charcoal background and yellow accent color.
+
+Requirements:
+
+* Dark scrollbar track.
+* Neutral dark-gray thumb.
+* Subtle yellow accent on hover or active interaction.
+* Consistent styling across the Media panel, Text Templates panel, Clip Inspector, and page.
+* Keep scrollbars visible and usable.
+* Do not create excessively thin scrollbars.
+* Ensure scrolling continues to work normally.
+
+Use the supported CSS scrollbar styling for the existing framework and browser environment.
+
+## 11. IMPROVE TEXT AND AUDIO WORKSPACE BEHAVIOR
+
+Keep the Media, Audio, Text, Effects, Transitions, Filters, and Templates workspaces accessible through the existing sidebar.
+
+The left panel should change according to the selected workspace.
+
+The Text Templates panel should appear when I select Text & Titles. It should not disappear just because I have not added a text clip.
+
+Similarly, the Audio workspace should show audio assets and supported audio tools when selected.
+
+The timeline's Audio 1 and Text 1 tracks should remain available for editing. Do not remove tracks when switching sidebar workspaces.
+
+Provide searchable title templates with real visual previews. Clicking Add must create a genuine text clip at a predictable timeline position.
+
+## 12. VERIFY THE COMPLETE WORKFLOW
+
+Use the existing project and test the actual behavior:
+
+1. Import the Minecraft recording.
+2. Verify the preview is large and displays the entire frame.
+3. Press Play and verify source audio is audible if present.
+4. Add a title template.
+5. Edit its displayed text.
+6. Drag the title around the video canvas.
+7. Add a text background and change its color and opacity.
+8. Split the video at the playhead.
+9. Trim both resulting clips.
+10. Apply a contrast or brightness effect and verify a visible change.
+11. Apply a transition between adjacent clips.
+12. Save and reopen the project.
+13. Export a short video and verify video, text, effects, transitions, and audio.
+
+Run the build and fix errors introduced by your changes.
+
+Prioritize the actual functionality of these existing features over adding new decorative UI elements. If something already works, verify it and do not unnecessarily rewrite it. Report what was tested successfully and what remains incomplete.

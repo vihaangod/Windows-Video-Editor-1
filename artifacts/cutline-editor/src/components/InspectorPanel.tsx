@@ -323,6 +323,21 @@ export default function InspectorPanel({
           <span className="cutline-inspector__field-label">Text background color (CSS color)</span>
           <input id={`input-title-background-${clip.id}`} className="cutline-inspector__number" type="text" value={clip.text.backgroundColor} disabled={disabled} data-testid="input-title-background" onChange={(event) => onChange({ text: { backgroundColor: event.currentTarget.value } })} />
         </label>
+        <div className="cutline-inspector__background-presets" aria-label="Text background presets">
+          <button type="button" disabled={disabled} onClick={() => onChange({ text: { backgroundStyle: { ...backgroundStyle, enabled: false } } })}>No background</button>
+          <button type="button" disabled={disabled} onClick={() => onChange({ text: {
+            backgroundColor: 'rgba(16,18,22,.82)',
+            backgroundStyle: { ...backgroundStyle, enabled: true, opacity: .82, padding: 16, radius: 0, width: undefined, height: undefined },
+          } })}>Subtitle</button>
+          <button type="button" disabled={disabled} onClick={() => onChange({ text: {
+            backgroundColor: '#111820',
+            backgroundStyle: { ...backgroundStyle, enabled: true, opacity: 1, padding: 20, radius: 0, width: undefined, height: undefined },
+          } })}>Solid</button>
+          <button type="button" disabled={disabled} onClick={() => onChange({ text: {
+            backgroundColor: 'rgba(16,18,22,.86)',
+            backgroundStyle: { ...backgroundStyle, enabled: true, opacity: .86, padding: 18, radius: 14, width: undefined, height: undefined },
+          } })}>Rounded</button>
+        </div>
         <label className="cutline-inspector__check cutline-inspector__check--spaced" htmlFor={`check-title-background-${clip.id}`}>
           <input
             id={`check-title-background-${clip.id}`}
@@ -401,7 +416,7 @@ export default function InspectorPanel({
         {rangeControl('Text opacity', 'slider-title-opacity', clip.text.opacity * 100, 0, 100, 1, (value) => onChange({ text: { opacity: value / 100 } }), '%')}
       </section>}
 
-      <section className="cutline-inspector__section" aria-labelledby="inspector-effects-heading">
+      {assetKind !== 'audio' && <section className="cutline-inspector__section" aria-labelledby="inspector-effects-heading">
         <div className="cutline-inspector__section-title">
           <h2 id="inspector-effects-heading">Effects</h2>
           <button type="button" className="cutline-inspector__reset-effects" disabled={disabled} onClick={() => onChange({ effects: { ...DEFAULT_EFFECTS } })} data-testid="button-reset-effects">Reset</button>
@@ -410,7 +425,7 @@ export default function InspectorPanel({
         <div className="cutline-inspector__effect-control">{effectToggle('Contrast', 'contrast')}{rangeControl('Contrast', 'slider-effect-contrast', effects.contrast, 0, 2, .05, (value) => onChange({ effects: { contrast: value } }))}</div>
         <div className="cutline-inspector__effect-control">{effectToggle('Saturation', 'saturation')}{rangeControl('Saturation', 'slider-effect-saturation', effects.saturation, 0, 2, .05, (value) => onChange({ effects: { saturation: value } }))}</div>
         <div className="cutline-inspector__effect-control">{effectToggle('Blur', 'blur')}{rangeControl('Blur', 'slider-effect-blur', effects.blur, 0, 20, .25, (value) => onChange({ effects: { blur: value } }), 'px')}</div>
-      </section>
+      </section>}
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-fade-heading">
         <div className="cutline-inspector__section-title"><h2 id="inspector-fade-heading">Fades</h2></div>

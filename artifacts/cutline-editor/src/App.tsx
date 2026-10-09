@@ -383,6 +383,8 @@ function Home() {
   const previewUrls = useRef(new Map<string, string>());
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const audioUrls = useRef(new Map<string, string>());
+  const previewAudioContext = useRef<AudioContext | null>(null);
+  const previewAudioNodes = useRef(new Map<string, { source: MediaElementAudioSourceNode; gain: GainNode }>());
   const audioRefCallbacks = useRef(new Map<string, (element: HTMLAudioElement | null) => void>());
   const audioPlayErrors = useRef(new Set<string>());
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -415,6 +417,10 @@ function Home() {
         previous?.pause();
         previous?.removeAttribute('src');
         previous?.load();
+        const node = previewAudioNodes.current.get(clipId);
+        node?.source.disconnect();
+        node?.gain.disconnect();
+        previewAudioNodes.current.delete(clipId);
         audioRefs.current.delete(clipId);
         audioPlayErrors.current.delete(clipId);
         const url = audioUrls.current.get(clipId);
@@ -425,6 +431,23 @@ function Home() {
       audioRefCallbacks.current.set(clipId, callback);
     }
     return callback;
+  };
+  const connectPreviewAudio = (clipId: string, audio: HTMLAudioElement) => {
+    const existing = previewAudioNodes.current.get(clipId);
+    if (existing) return true;
+    const context = previewAudioContext.current;
+    if (!context) return false;
+    try {
+      const source = context.createMediaElementSource(audio);
+      const gain = context.createGain();
+      source.connect(gain);
+      gain.connect(context.destination);
+      previewAudioNodes.current.set(clipId, { source, gain });
+      audio.volume = 1;
+      return true;
+    } catch {
+      return false;
+    }
   };
   const notify = useCallback((message: string, error = false) => {
     setNotice({ message, error });
@@ -565,6 +588,14 @@ function Home() {
   useEffect(() => () => {
     audioUrls.current.forEach((url) => URL.revokeObjectURL(url));
     audioUrls.current.clear();
+    previewAudioNodes.current.forEach(({ source, gain }) => {
+      source.disconnect();
+      gain.disconnect();
+    });
+    previewAudioNodes.current.clear();
+    if (previewAudioContext.current && previewAudioContext.current.state !== 'closed') {
+      void previewAudioContext.current.close();
+    }
   }, []);
 
   useEffect(() => {
@@ -642,7 +673,15 @@ function Home() {
         try { audio.currentTime = Math.max(0, sourceTime); } catch { /* media metadata may still be loading */ }
       }
       audio.playbackRate = clip.speed;
-      audio.volume = muted ? 0 : Math.max(0, Math.min(1, volume * clip.volume * getAudioFade(clip, playhead)));
+      const outputGain = muted ? 0 : Math.max(0, volume * clip.volume * getAudioFade(clip, playhead));
+      const routed = connectPreviewAudio(clip.id, audio);
+      const audioNode = previewAudioNodes.current.get(clip.id);
+      if (routed && audioNode) {
+        audio.volume = 1;
+        audioNode.gain.gain.value = outputGain;
+      } else {
+        audio.volume = Math.min(1, outputGain);
+      }
       if (playing) {
         void audio.play().then(() => {
           audioPlayErrors.current.delete(clip.id);
@@ -657,6 +696,13 @@ function Home() {
       } else audio.pause();
     }
   }, [audioClips, project.tracks, playhead, playing, muted, volume, notify]);
+
+  useEffect(() => {
+    const context = previewAudioContext.current;
+    if (!context || context.state === 'closed') return;
+    if (playing) void context.resume().catch(() => undefined);
+    else void context.suspend().catch(() => undefined);
+  }, [playing]);
 
   useEffect(() => {
     isPlayingRef.current = playing;
@@ -815,7 +861,13 @@ function Home() {
     }
     const cutSource = selectedClip.sourceIn + (playhead - selectedClip.timelineStart) * selectedClip.speed;
     const right: Clip = { ...selectedClip, id: uid(), timelineStart: playhead, sourceIn: cutSource };
-    commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceOut: cutSource } : clip).concat(right) }));
+    commit((current) => ({
+      ...current,
+      clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceOut: cutSource } : clip).concat(right),
+      transitions: (current.transitions || []).map((transition) =>
+        transition.fromClipId === selectedClip.id ? { ...transition, fromClipId: right.id } : transition
+      ),
+    }));
     setSelectedClipId(right.id);
   };
   const trimAtPlayhead = (side: 'start' | 'end') => {
@@ -834,8 +886,35 @@ function Home() {
   const removeSelected = () => {
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock this track before deleting its clip.', true); return; }
-    commit((current) => ({ ...current, clips: current.clips.filter((clip) => clip.id !== selectedClip.id) }));
+    commit((current) => ({
+      ...current,
+      clips: current.clips.filter((clip) => clip.id !== selectedClip.id),
+      transitions: (current.transitions || []).filter((transition) =>
+        transition.fromClipId !== selectedClip.id && transition.toClipId !== selectedClip.id
+      ),
+    }));
     setSelectedClipId(null);
+  };
+  const rippleDeleteSelected = () => {
+    if (!selectedClip) return;
+    if (selectedClipLocked) { notify('Unlock this track before ripple deleting its clip.', true); return; }
+    const removedId = selectedClip.id;
+    const removedEnd = selectedClip.timelineStart + getClipDuration(selectedClip);
+    const duration = getClipDuration(selectedClip);
+    const trackId = selectedClip.trackId;
+    commit((current) => ({
+      ...current,
+      clips: current.clips
+        .filter((clip) => clip.id !== removedId)
+        .map((clip) => clip.trackId === trackId && clip.timelineStart >= removedEnd - .001
+          ? { ...clip, timelineStart: Math.max(0, clip.timelineStart - duration) }
+          : clip),
+      transitions: (current.transitions || []).filter((transition) =>
+        transition.fromClipId !== removedId && transition.toClipId !== removedId
+      ),
+    }));
+    setSelectedClipId(null);
+    notify('Clip removed and later clips on this track moved earlier.');
   };
   const updateSelectedClip = (patch: ClipPatch) => {
     if (!selectedClip) return;
@@ -1013,11 +1092,15 @@ function Home() {
   });
   const deleteTrack = (track: Track) => {
     const count = projectRef.current.clips.filter((clip) => clip.trackId === track.id).length;
+    const removedClipIds = new Set(projectRef.current.clips.filter((clip) => clip.trackId === track.id).map((clip) => clip.id));
     if (!window.confirm(`Delete ${track.name} and ${count} clip${count === 1 ? '' : 's'} on it? This can be undone.`)) return;
     commit((current) => ({
       ...current,
       tracks: current.tracks.filter((item) => item.id !== track.id).map((item, order) => ({ ...item, order })),
       clips: current.clips.filter((clip) => clip.trackId !== track.id),
+      transitions: (current.transitions || []).filter((transition) =>
+        !removedClipIds.has(transition.fromClipId) && !removedClipIds.has(transition.toClipId)
+      ),
     }));
     if (selectedClip?.trackId === track.id) setSelectedClipId(null);
   };
@@ -1027,7 +1110,6 @@ function Home() {
       enabled: { brightness: true, contrast: true, saturation: true, blur: true, ...effects.enabled },
     },
   });
-  const applySelectedFade = (fadeIn: number, fadeOut: number) => updateSelectedClip({ fadeIn, fadeOut });
   const applySelectedTransition = (type: ClipTransition['type'], requestedDuration: number) => {
     if (!canApplySelectedTransition || !selectedClip || !selectedClipTransitionTarget) {
       notify('Select a video clip followed immediately by another video clip on the same track.', true);
@@ -1053,6 +1135,7 @@ function Home() {
   };
   const removeSelectedTransition = () => {
     if (!selectedClip) return;
+    if (selectedClipLocked) { notify('Unlock the track before removing its transition.', true); return; }
     commit((current) => ({
       ...current,
       transitions: (current.transitions || []).filter((transition) =>
@@ -1070,6 +1153,16 @@ function Home() {
     if (playing) {
       setPlaying(false);
       return;
+    }
+    if (typeof AudioContext !== 'undefined') {
+      try {
+        const context = previewAudioContext.current || new AudioContext();
+        previewAudioContext.current = context;
+        for (const [clipId, audio] of audioRefs.current) connectPreviewAudio(clipId, audio);
+        void context.resume().catch(() => undefined);
+      } catch {
+        // Native audio playback remains available if the browser cannot create an audio graph.
+      }
     }
     if (contentEnd > 0 && playhead >= contentEnd) setPlayhead(0);
     setPlaying(true);
@@ -1168,6 +1261,9 @@ function Home() {
     const nextProject: Project = {
       ...projectRef.current,
       clips: projectRef.current.clips.filter((clip) => clip.assetId !== asset.id),
+      transitions: (projectRef.current.transitions || []).filter((transition) =>
+        !linkedClips.some((clip) => clip.id === transition.fromClipId || clip.id === transition.toClipId)
+      ),
       removedAssetIds: [...new Set([...(projectRef.current.removedAssetIds || []), asset.id])],
     };
     commit(() => nextProject);
@@ -1380,6 +1476,7 @@ function Home() {
         target.isContentEditable || target.matches('input, textarea, select')
       );
       if (editing) return;
+      if (contextMenu) return;
       const modifier = event.ctrlKey || event.metaKey;
       if (modifier && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
       if (modifier && event.key.toLowerCase() === 's') { event.preventDefault(); void saveNow(); return; }
@@ -1614,7 +1711,7 @@ function Home() {
       audioJobs.forEach(({ media }) => media.pause());
       if (failureFromAudio) throw failureFromAudio;
       videoSource.close();
-      audioSource.close();
+      audioSource?.close();
       await output.finalize();
       outputCompleted = true;
       setExportProgress(100);
@@ -1662,11 +1759,66 @@ function Home() {
   };
 
   const contextMenuAsset = contextMenu?.kind === 'media' ? assets.find((asset) => asset.id === contextMenu.id) : undefined;
+  const contextMenuClip = contextMenu?.kind === 'clip' ? project.clips.find((clip) => clip.id === contextMenu.id) : undefined;
+  const contextMenuClipAsset = contextMenuClip?.assetId ? assets.find((asset) => asset.id === contextMenuClip.assetId) : undefined;
+  const contextMenuClipLocked = Boolean(contextMenuClip && project.tracks.find((track) => track.id === contextMenuClip.trackId)?.locked);
   const contextMenuProject = contextMenu?.kind === 'project' ? savedProjects.find((record) => record.project.id === contextMenu.id) : undefined;
-  const contextMenuItems: ContextMenuItem[] = contextMenu?.kind === 'media' && contextMenuAsset ? [
+  const contextMenuItems: ContextMenuItem[] = contextMenu?.kind === 'clip' && contextMenuClip ? [
+    ...(contextMenuClip.text ? [{
+      label: 'Edit Text',
+      icon: <Pencil size={14} />,
+      disabled: contextMenuClipLocked,
+      action: () => {
+        setSelectedClipId(contextMenuClip.id);
+        setLibraryWorkspace('text');
+        window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="input-title-content"]')?.focus(), 0);
+      },
+    }] : []),
+    {
+      label: 'Rename Clip',
+      icon: <Pencil size={14} />,
+      disabled: contextMenuClipLocked,
+      action: () => {
+        const currentName = contextMenuClip.displayName || contextMenuClip.text?.templateName || contextMenuClipAsset?.name || 'Text clip';
+        const name = window.prompt('Clip name (does not change the displayed text or source file)', currentName);
+        if (name?.trim()) commit((current) => ({
+          ...current,
+          clips: current.clips.map((clip) => clip.id === contextMenuClip.id ? { ...clip, displayName: name.trim() } : clip),
+        }));
+      },
+    },
+    { label: 'Duplicate', icon: <Copy size={14} />, action: duplicateSelectedClip, disabled: contextMenuClipLocked },
+    { label: 'Copy', icon: <Copy size={14} />, action: copySelectedClip, separatorBefore: true },
+    { label: 'Paste at Playhead', icon: <Copy size={14} />, action: pasteClip, disabled: !clipboardClip.current },
+    { label: 'Split at Playhead', icon: <Split size={14} />, action: splitSelected, disabled: contextMenuClipLocked, separatorBefore: true },
+    {
+      label: 'Edit Timing & Duration',
+      icon: <SlidersHorizontal size={14} />,
+      disabled: contextMenuClipLocked,
+      action: () => document.querySelector<HTMLElement>('[data-testid="input-timeline-position"]')?.focus(),
+    },
+    {
+      label: 'Clip Properties',
+      icon: <Info size={14} />,
+      action: () => setDetailsDialog({
+        title: 'Clip properties',
+        rows: [
+          ['Name', contextMenuClip.displayName || contextMenuClip.text?.templateName || contextMenuClipAsset?.name || 'Text clip'],
+          ['Type', contextMenuClip.text ? 'Text overlay' : contextMenuClip.audioOnly ? 'Audio from video' : contextMenuClipAsset?.mimeType || 'Unknown'],
+          ['Timeline start', `${contextMenuClip.timelineStart.toFixed(2)} sec`],
+          ['Duration', `${getClipDuration(contextMenuClip).toFixed(2)} sec`],
+          ['Source in', `${contextMenuClip.sourceIn.toFixed(2)} sec`],
+          ['Source out', `${contextMenuClip.sourceOut.toFixed(2)} sec`],
+          ['Track', project.tracks.find((track) => track.id === contextMenuClip.trackId)?.name || 'Unknown'],
+        ],
+      }),
+    },
+    { label: 'Ripple Delete', icon: <Trash2 size={14} />, action: rippleDeleteSelected, disabled: contextMenuClipLocked, destructive: true, separatorBefore: true },
+    { label: contextMenuClip.text ? 'Delete Text Clip' : 'Remove from Timeline', icon: <Trash2 size={14} />, action: removeSelected, disabled: contextMenuClipLocked, destructive: true },
+  ] : contextMenu?.kind === 'media' && contextMenuAsset ? [
     { label: 'Rename', icon: <Pencil size={14} />, action: () => void renameMedia(contextMenuAsset) },
     { label: 'Duplicate', icon: <Copy size={14} />, action: () => void duplicateMedia(contextMenuAsset) },
-    { label: 'Add to Timeline', icon: <Plus size={14} />, action: () => addAssetToTimeline(contextMenuAsset), separatorBefore: true },
+    { label: 'Add to Timeline', icon: <Plus size={14} />, action: () => addAssetToTimeline(contextMenuAsset, undefined, playhead, libraryWorkspace === 'audio'), separatorBefore: true },
     { label: 'Reveal Source File', icon: <FolderOpen size={14} />, action: () => undefined, disabled: true, hint: 'Not available in browser' },
     { label: 'Media Properties', icon: <Info size={14} />, action: () => showMediaDetails(contextMenuAsset) },
     { label: 'Remove from Project', icon: <Trash2 size={14} />, action: () => removeMediaFromProject(contextMenuAsset), destructive: true, separatorBefore: true },
@@ -1768,9 +1920,13 @@ function Home() {
           {(libraryWorkspace === 'effects' || libraryWorkspace === 'transitions' || libraryWorkspace === 'filters') &&
             <EffectWorkspace
               workspace={libraryWorkspace}
-              disabled={!selectedClip || selectedClipLocked}
+              disabled={!selectedClip || selectedClipLocked ||
+                ((libraryWorkspace === 'effects' || libraryWorkspace === 'filters') && selectedAssetKind === 'audio') ||
+                (libraryWorkspace === 'transitions' && !canApplySelectedTransition && !selectedClipHasTransition)}
               onEffects={applySelectedEffect}
-              onFade={applySelectedFade}
+              onTransition={applySelectedTransition}
+              onRemoveTransition={removeSelectedTransition}
+              hasSelectedTransition={selectedClipHasTransition && !selectedClipLocked}
             />}
         </aside>
         <section className="stage">
@@ -1779,8 +1935,8 @@ function Home() {
           <button className="icon-btn" title="Add audio track" onClick={() => addTrack('audio')} data-testid="button-add-audio-track"><AudioLines size={15} /></button>
           <button className="icon-btn" title="Add text track" onClick={() => addTrack('text')} data-testid="button-add-text-track"><Type size={15} /></button>
             <span className="divider" />
-            <button className="icon-btn" title="Split selected clip at playhead" onClick={splitSelected} disabled={!selectedClip} data-testid="button-split"><Split size={15} /></button>
-            <button className="icon-btn" title="Delete selected clip" onClick={removeSelected} disabled={!selectedClip} data-testid="button-delete-clip"><Trash2 size={15} /></button>
+            <button className="icon-btn" title="Split selected clip at playhead" onClick={splitSelected} disabled={!selectedClip || selectedClipLocked} data-testid="button-split"><Split size={15} /></button>
+            <button className="icon-btn" title="Delete selected clip" onClick={removeSelected} disabled={!selectedClip || selectedClipLocked} data-testid="button-delete-clip"><Trash2 size={15} /></button>
             <span className="divider" />
             <label>Canvas</label>
             <select aria-label="Project resolution" value={`${project.width}x${project.height}`} onChange={(event) => { const [width, height] = event.target.value.split('x').map(Number); commit((current) => ({ ...current, width, height })); }} data-testid="select-resolution">
@@ -1792,7 +1948,7 @@ function Home() {
             <span className="divider" />
             <div className="preview-zoom-tools" role="group" aria-label="Preview zoom">
               <button type="button" className={previewZoom === 'fit' ? 'active' : ''} aria-pressed={previewZoom === 'fit'} onClick={() => setPreviewZoom('fit')} data-testid="button-preview-fit">Fit</button>
-              <button type="button" className={previewZoom === 'canvas' ? 'active' : ''} aria-pressed={previewZoom === 'canvas'} onClick={() => setPreviewZoom('canvas')} data-testid="button-preview-canvas">Canvas</button>
+              <button type="button" className={previewZoom === 'canvas' ? 'active' : ''} aria-pressed={previewZoom === 'canvas'} onClick={() => setPreviewZoom('canvas')} data-testid="button-preview-canvas">Fit Canvas</button>
               <button type="button" className={previewZoom === '100' ? 'active' : ''} aria-pressed={previewZoom === '100'} onClick={() => setPreviewZoom('100')} data-testid="button-preview-100">100%</button>
             </div>
           </div>
@@ -1840,6 +1996,7 @@ function Home() {
           assetName={selectedAsset?.name}
           assetKind={selectedAssetKind}
           sourceDuration={selectedAsset?.duration}
+          disabled={selectedClipLocked}
           onChange={updateSelectedClip}
           onRemove={removeSelected}
           onFit={() => setSelectedFit('contain')}
@@ -1850,12 +2007,12 @@ function Home() {
       <section className="timeline-panel">
         <div className="timeline-head">
           <span className="timeline-label">Timeline</span>
-          <button className="btn flat" title="Trim selected clip start to playhead" disabled={!selectedClip} onClick={() => trimAtPlayhead('start')} data-testid="button-trim-start"><Minus size={13} />In</button>
-          <button className="btn flat" title="Trim selected clip end to playhead" disabled={!selectedClip} onClick={() => trimAtPlayhead('end')} data-testid="button-trim-end"><Minus size={13} />Out</button>
-          <button className="icon-btn" title="Delete selected clip" disabled={!selectedClip} onClick={removeSelected} data-testid="button-timeline-delete"><Trash2 size={14} /></button>
+          <button className="btn flat" title="Trim selected clip start to playhead" disabled={!selectedClip || selectedClipLocked} onClick={() => trimAtPlayhead('start')} data-testid="button-trim-start"><Minus size={13} />In</button>
+          <button className="btn flat" title="Trim selected clip end to playhead" disabled={!selectedClip || selectedClipLocked} onClick={() => trimAtPlayhead('end')} data-testid="button-trim-end"><Minus size={13} />Out</button>
+          <button className="icon-btn" title="Delete selected clip" disabled={!selectedClip || selectedClipLocked} onClick={removeSelected} data-testid="button-timeline-delete"><Trash2 size={14} /></button>
           <span className="minor">{selectedClip ? `Selected · ${formatTime((selectedClip.sourceOut - selectedClip.sourceIn) / selectedClip.speed)}` : `${project.clips.length} clips`}</span>
           {selectedClip && <label className="clip-volume">Clip gain
-            <input aria-label="Selected clip volume" type="range" min="0" max="2" step=".01" value={selectedClip.volume} onChange={(event) => commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, volume: Number(event.target.value) } : clip) }))} data-testid="input-clip-volume" />
+            <input aria-label="Selected clip volume" type="range" min="0" max="2" step=".01" value={selectedClip.volume} disabled={selectedClipLocked} onChange={(event) => updateSelectedClip({ volume: Number(event.target.value) })} data-testid="input-clip-volume" />
           </label>}
           <button className="icon-btn" title="Zoom out timeline" onClick={() => setZoom((value) => Math.max(.5, value - .25))} data-testid="button-zoom-out"><Minus size={14} /></button>
           <button className="icon-btn" title="Zoom in timeline" onClick={() => setZoom((value) => Math.min(2, value + .25))} data-testid="button-zoom-in"><Plus size={14} /></button>
@@ -1900,6 +2057,24 @@ function Home() {
                     const clipLabel = clip.displayName || clip.text?.templateName || asset?.name || 'Text clip';
                     return <div key={clip.id} draggable={!track.locked} className={`clip ${clipKindClass} ${selectedClipId === clip.id ? 'selected' : ''}`}
                       style={{ left: clip.timelineStart * scale, width: Math.max(8, duration * scale), opacity: track.muted ? .5 : 1 }}
+                      tabIndex={0}
+                      onContextMenu={(event) => {
+                        setSelectedClipId(clip.id);
+                        setSelectedAssetId(asset?.id || null);
+                        openContextMenu(event, 'clip', clip.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === 'Enter') {
+                          setSelectedClipId(clip.id);
+                          setSelectedAssetId(asset?.id || null);
+                        }
+                        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                          setSelectedClipId(clip.id);
+                          setSelectedAssetId(asset?.id || null);
+                          openKeyboardContextMenu(event, 'clip', clip.id);
+                        }
+                      }}
                       onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); setSelectedAssetId(asset?.id || null); }}
                       onDoubleClick={(event) => {
                         event.stopPropagation();
@@ -1922,6 +2097,7 @@ function Home() {
                   className="clip-trim-handle clip-trim-handle--start"
                   aria-label={`Trim start of ${asset?.name || clip.text?.templateName || 'Text clip'}`}
                   title="Drag to trim clip start"
+                  disabled={track.locked}
                   onPointerDown={(event) => startTrimDrag(event, clip, 'start')}
                   onPointerMove={updateTrimDrag}
                   onPointerUp={finishTrimDrag}
@@ -1934,6 +2110,7 @@ function Home() {
                   className="clip-trim-handle clip-trim-handle--end"
                   aria-label={`Trim end of ${asset?.name || clip.text?.templateName || 'Text clip'}`}
                   title="Drag to trim clip end"
+                  disabled={track.locked}
                   onPointerDown={(event) => startTrimDrag(event, clip, 'end')}
                   onPointerMove={updateTrimDrag}
                   onPointerUp={finishTrimDrag}
