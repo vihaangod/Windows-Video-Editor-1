@@ -20,7 +20,7 @@ import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTempl
 import {
   createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
+  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
 } from '@/lib/composition';
 import { getExportFrameCount, getExportProgress, getExportVideoBitrate } from '@/lib/export-utils';
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
@@ -427,6 +427,7 @@ function Home() {
   const [mediaRevision, setMediaRevision] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const [previewFrameSize, setPreviewFrameSize] = useState({ width: 0, height: 0 });
   const previewMedia = useRef(new Map<string, HTMLImageElement | HTMLVideoElement>());
@@ -445,6 +446,7 @@ function Home() {
   const future = useRef<Project[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
   const saveRevision = useRef(0);
+  const lifecycleSaveRevision = useRef<number | null>(null);
   const saveQueue = useRef<((snapshot: ProjectSaveSnapshot) => Promise<void>) | null>(null);
   if (!saveQueue.current) {
     saveQueue.current = createSerializedWriteQueue(({ project: snapshotProject, assets: snapshotAssets }) =>
@@ -600,11 +602,32 @@ function Home() {
     if (!projectHydrated) return;
     const flushOnPageHide = () => {
       if (saveState === 'saved' && saveTimer.current === undefined) return;
+      if (saveState === 'saving' && saveTimer.current === undefined) return;
       if (saveTimer.current !== undefined) {
         window.clearTimeout(saveTimer.current);
         saveTimer.current = undefined;
       }
-      void persistProjectSnapshot(projectRef.current, assetsRef.current).catch(() => undefined);
+      const revision = saveRevision.current;
+      if (lifecycleSaveRevision.current === revision) return;
+      lifecycleSaveRevision.current = revision;
+      const snapshotProject = projectRef.current;
+      const snapshotAssets = assetsRef.current;
+      setSaveState('saving');
+      persistProjectSnapshot(snapshotProject, snapshotAssets)
+        .then(() => {
+          if (
+            revision === saveRevision.current &&
+            projectRef.current === snapshotProject &&
+            assetsRef.current === snapshotAssets
+          ) setSaveState('saved');
+        })
+        .catch(() => {
+          if (lifecycleSaveRevision.current === revision) lifecycleSaveRevision.current = null;
+          if (revision === saveRevision.current) setSaveState('error');
+        });
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flushOnPageHide();
     };
     const warnBeforeDiscard = (event: BeforeUnloadEvent) => {
       if (saveState === 'saved') return;
@@ -612,9 +635,11 @@ function Home() {
       event.returnValue = '';
     };
     window.addEventListener('pagehide', flushOnPageHide);
+    document.addEventListener('visibilitychange', flushWhenHidden);
     window.addEventListener('beforeunload', warnBeforeDiscard);
     return () => {
       window.removeEventListener('pagehide', flushOnPageHide);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
       window.removeEventListener('beforeunload', warnBeforeDiscard);
     };
   }, [persistProjectSnapshot, projectHydrated, saveState]);
@@ -644,6 +669,34 @@ function Home() {
   const timelineEnd = Math.max(getTimelineEnd(contentEnd), timelineDragEnd || 0);
   const timelineRuler = useMemo(() => getTimelineRuler(timelineEnd, scale), [timelineEnd, scale]);
   const renderIndex = useMemo(() => createProjectRenderIndex(project, assets), [project, assets]);
+  const previewBaseProjectRef = useRef<{ source: Project; rendered: Project } | null>(null);
+  const previewBaseProject = useMemo(() => {
+    const previous = previewBaseProjectRef.current;
+    if (previous?.source === project) return previous.rendered;
+    const videoTracks = project.tracks.filter((track) => track.kind === 'video');
+    const videoTrackIds = new Set(videoTracks.map((track) => track.id));
+    const videoClips = project.clips.filter((clip) => !clip.text && videoTrackIds.has(clip.trackId));
+    const sameReferences = <T,>(left: T[], right: T[]) =>
+      left.length === right.length && left.every((item, index) => item === right[index]);
+    if (
+      previous &&
+      previous.rendered.width === project.width &&
+      previous.rendered.height === project.height &&
+      previous.rendered.transitions === project.transitions &&
+      sameReferences(previous.rendered.tracks, videoTracks) &&
+      sameReferences(previous.rendered.clips, videoClips)
+    ) {
+      previewBaseProjectRef.current = { source: project, rendered: previous.rendered };
+      return previous.rendered;
+    }
+    const rendered = { ...project, tracks: videoTracks, clips: videoClips };
+    previewBaseProjectRef.current = { source: project, rendered };
+    return rendered;
+  }, [project]);
+  const previewBaseRenderIndex = useMemo(
+    () => createProjectRenderIndex(previewBaseProject, assets),
+    [previewBaseProject, assets],
+  );
   const extendTimelineOnDrag = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const timeline = timelineRef.current;
@@ -856,11 +909,24 @@ function Home() {
 
   useEffect(() => {
     const canvas = previewCanvasRef.current;
-    const context = canvas?.getContext('2d');
-    if (!canvas || !context) return;
-    if (canvas.width !== project.width) canvas.width = project.width;
-    if (canvas.height !== project.height) canvas.height = project.height;
-    renderProjectFrame(context, project, assets, previewMedia.current, playhead, playing, selectedClipId, markupDraft, renderIndex);
+    if (!canvas) return;
+    const previewSize = getPreviewCanvasSize(project.width, project.height);
+    if (canvas.width !== previewSize.width) canvas.width = previewSize.width;
+    if (canvas.height !== previewSize.height) canvas.height = previewSize.height;
+    const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    if (!context) return;
+    renderProjectFrame(context, previewBaseProject, assets, previewMedia.current, playhead, playing, null, null, previewBaseRenderIndex, { layer: 'base' });
+  }, [previewBaseProject, previewBaseRenderIndex, assets, playhead, playing, mediaRevision]);
+
+  useEffect(() => {
+    const canvas = previewOverlayCanvasRef.current;
+    if (!canvas) return;
+    const previewSize = getPreviewCanvasSize(project.width, project.height);
+    if (canvas.width !== previewSize.width) canvas.width = previewSize.width;
+    if (canvas.height !== previewSize.height) canvas.height = previewSize.height;
+    const context = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!context) return;
+    renderProjectFrame(context, project, assets, previewMedia.current, playhead, playing, selectedClipId, markupDraft, renderIndex, { layer: 'overlay' });
   }, [project, assets, playhead, playing, mediaRevision, selectedClipId, markupDraft, renderIndex]);
 
   useEffect(() => {
@@ -2321,11 +2387,17 @@ function Home() {
         else if (event.dataTransfer.files.length) void importFiles(event.dataTransfer.files);
       }}>
       <header className="topbar">
-        <div className="brand" aria-label="Cutline">
+          <div className="brand" aria-label="Cutline">
           <img className="brand-mark" src={cutlineAppIcon} alt="" />
           <span className="brand-name">Cutline</span>
         </div>
-        <div className={`save-state save-state--${saveState}`} role="status" aria-live="polite" data-testid="status-save-state">
+          <div
+            className={`save-state save-state--${saveState}`}
+            role="status"
+            aria-live="polite"
+            title={saveState === 'error' ? 'The project is still available in this session. Select Save to retry.' : undefined}
+            data-testid="status-save-state"
+          >
           {saveState === 'saved'
             ? <Check className="save-state__icon" size={13} strokeWidth={2.4} aria-hidden="true" />
             : saveState === 'saving'
@@ -2337,7 +2409,7 @@ function Home() {
             {saveState === 'saved' ? 'Saved'
               : saveState === 'dirty' ? 'Unsaved changes'
                 : saveState === 'saving' ? 'Saving…'
-                  : 'Save failed · use Save to retry'}
+                  : 'Save failed'}
           </span>
         </div>
         <div className="top-spacer" />
@@ -2476,7 +2548,12 @@ function Home() {
               : { width: previewZoom === '100' ? `${project.width}px` : `min(${previewZoom === 'canvas' ? '99%' : '94%'}, ${previewZoom === 'canvas' ? project.width : 1320}px)`, aspectRatio: `${project.width} / ${project.height}` }}>
               <canvas
                 ref={previewCanvasRef}
-                className={`preview-canvas${libraryWorkspace === 'markup' ? ' is-markup-active' : ''}`}
+                className="preview-canvas preview-canvas--video"
+                aria-hidden="true"
+              />
+              <canvas
+                ref={previewOverlayCanvasRef}
+                className={`preview-canvas preview-canvas--overlay${libraryWorkspace === 'markup' ? ' is-markup-active' : ''}`}
                 role="img"
                 aria-label={`Video preview at ${formatTime(playhead)}; project canvas ${project.width} by ${project.height}`}
                 onPointerDown={startPreviewPointer}

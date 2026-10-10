@@ -154,6 +154,17 @@ export function createProjectRenderIndex(project: Project, assets: Asset[]): Pro
     clipsById: new Map(project.clips.map((clip) => [clip.id, clip])),
   };
 }
+
+export function getPreviewCanvasSize(width: number, height: number, maxDimension = 1920) {
+  const safeWidth = Math.max(1, Math.round(width));
+  const safeHeight = Math.max(1, Math.round(height));
+  const scale = Math.min(1, maxDimension / Math.max(safeWidth, safeHeight));
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
+}
+
 export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
 
 export const DEFAULT_TRANSFORM: ClipTransform = {
@@ -614,21 +625,35 @@ export function renderProjectFrame(
   selectedClipId?: string | null,
   markupDraft?: MarkupDrawing | null,
   renderIndex?: ProjectRenderIndex,
+  options: { layer?: 'all' | 'base' | 'overlay' } = {},
 ) {
+  const layer = options.layer ?? 'all';
+  const scaleX = context.canvas.width / Math.max(1, project.width);
+  const scaleY = context.canvas.height / Math.max(1, project.height);
+  context.setTransform(1, 0, 0, 1, 0, 0);
   context.save();
   context.filter = 'none';
   context.globalAlpha = 1;
-  context.fillStyle = '#101216';
-  context.fillRect(0, 0, project.width, project.height);
+  context.globalCompositeOperation = 'source-over';
+  if (layer === 'overlay') {
+    context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+  }
+  context.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  if (layer !== 'overlay') {
+    context.fillStyle = '#101216';
+    context.fillRect(0, 0, project.width, project.height);
+  }
 
   const activeVisual = project.clips.filter((clip) => {
+    if (layer === 'base' && clip.text) return false;
+    if (layer === 'overlay' && !clip.text) return false;
     const track = renderIndex
       ? renderIndex.tracksById.get(clip.trackId)
       : project.tracks.find((item) => item.id === clip.trackId);
     if (!track || (track.kind !== 'video' && track.kind !== 'text')) return false;
     return track.visible !== false && time >= clip.timelineStart && time < clip.timelineStart + getClipDuration(clip);
   });
-  const activeTransitions = (project.transitions || []).flatMap((transition) => {
+  const activeTransitions = (layer === 'overlay' ? [] : project.transitions || []).flatMap((transition) => {
     const fromClip = renderIndex
       ? renderIndex.clipsById.get(transition.fromClipId)
       : project.clips.find((clip) => clip.id === transition.fromClipId);
@@ -716,9 +741,10 @@ export function renderProjectFrame(
     }
     if (transitionClipIds.has(clip.id)) continue;
     if (clip.text) {
-      drawText(context, clip, time, project);
+      if (layer !== 'base') drawText(context, clip, time, project);
       continue;
     }
+    if (layer === 'overlay') continue;
     if (!clip.assetId) continue;
     activeAssetIds.add(clip.assetId);
     const asset = renderIndex
@@ -728,17 +754,21 @@ export function renderProjectFrame(
     if (asset && source) drawMedia(context, clip, asset, source, time, project, playing);
   }
 
-  [...(project.markups || []), ...(markupDraft ? [markupDraft] : [])]
-    .filter((drawing) => time >= drawing.start && time < drawing.end)
-    .forEach((drawing) => drawMarkup(context, drawing));
+  if (layer !== 'base') {
+    [...(project.markups || []), ...(markupDraft ? [markupDraft] : [])]
+      .filter((drawing) => time >= drawing.start && time < drawing.end)
+      .forEach((drawing) => drawMarkup(context, drawing));
+  }
 
-  if (selectedClipId) {
+  if (layer !== 'base' && selectedClipId) {
     const selected = renderClips.find((clip) => clip.id === selectedClipId && clip.text);
     if (selected) drawTextSelection(context, selected, project);
   }
 
-  for (const [assetId, source] of mediaByAsset) {
-    if (source instanceof HTMLVideoElement && !activeAssetIds.has(assetId) && !source.paused) source.pause();
+  if (layer !== 'overlay') {
+    for (const [assetId, source] of mediaByAsset) {
+      if (source instanceof HTMLVideoElement && !activeAssetIds.has(assetId) && !source.paused) source.pause();
+    }
   }
   context.restore();
 }

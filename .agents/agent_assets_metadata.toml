@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "KgC7G633Vv_6qq-It9Qfs"
+uri = "file://artifacts/cutline-editor/desktop-assets/cutline-app-icon-512.png"
+type = "image"
+title = "Cutline app icon — 512 × 512"
+description = "Golden Cutline video-editing app icon. The matching multi-size Windows ICO is in the desktop-assets folder."
+logical_id = "80f208c5-32f8-43a1-8d5c-8a372435dfd3"
+content_hash = "sha256:e1fd274b879f535ca49b84098399d3780c1cbfccb7863840384eb2c31d39a0e4"
+size = 33676
+mtime_ms = 1791610934427
+storage_uri = "gcs://replit-rams-assets-pike/rams/assets/repl:41571ab7-6add-4d1d-995d-44e760914a5c/80f208c5-32f8-43a1-8d5c-8a372435dfd3/597d56dc-de25-4943-945d-f71c9a60db4d"
+storage_version_token = "1791611238671200"
+content_type = "image/png"

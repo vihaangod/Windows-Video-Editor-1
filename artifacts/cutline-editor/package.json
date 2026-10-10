@@ -9,7 +9,8 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:timeline": "node --experimental-strip-types --test src/lib/timeline-geometry.test.ts src/lib/export-utils.test.ts",
-    "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts"
+    "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts",
+    "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

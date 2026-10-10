@@ -1,0 +1,44 @@
+Improve Cutline's branding, autosave system, and video preview reliability while preserving the existing dark-and-golden theme.
+
+**1. App Branding**
+
+* Make “Cutline” look premium and professional in the top header. The current font is too thick, so use a clean, modern medium-weight font with balanced spacing.
+* Create a professional golden video-editing logo for the future Windows desktop app (.exe). Do not waste time creating or modifying a browser favicon.
+* Keep branding consistent throughout the application.
+
+**2. Save Status UI**
+
+* Redesign the “Saved” and “Unsaved Changes” indicators in the top header. Make them compact, elegant, and readable, with subtle icons and colors matching the existing theme.
+* Show “Saving…” while changes are being saved and “Saved” only after saving succeeds.
+* Avoid oversized badges, excessively bold text, and distracting styling.
+
+**3. Reliable Autosave**
+
+* Automatically save all project changes, including timeline edits, clips, trimming, effects, transitions, text, audio, filters, and project settings.
+* Use a short debounce delay to prevent excessive saves.
+* Ensure projects remain available after refreshing the page, closing the app, or reopening it. Use the existing storage/backend system and keep each project's data separate.
+* Retain unsaved changes after save failures and retry safely. Never show “Saved” while saving is pending or has failed.
+* Keep manual saving functional alongside autosave. Inspect and fix the actual save-state logic rather than only changing the UI.
+
+**4. Fix Text Overlay Black-Screen Bug**
+
+* Adding text currently makes the live preview laggy, and the video sometimes turns completely black when text appears or remains black until the end of the timeline.
+* Investigate the actual video-rendering pipeline, canvas compositing, WebGL, alpha transparency, and text-overlay implementation.
+* Render text on an independent transparent layer above the video. Updating, moving, editing, or deleting text must never clear or replace the underlying video frames.
+* Ensure text appears only during its assigned timeline duration and that video playback continues normally before, during, and after each text clip.
+
+**5. Optimize High Resolution and Frame Rates**
+
+* The preview bug occurs mostly above 30 FPS and with 4K video (3840×2160). Specifically test 1080p at 60 FPS, 4K at 30 FPS, 4K at 60 FPS, and higher frame rates where supported.
+* Reduce unnecessary React re-renders, repeated canvas creation, duplicate animation loops, excessive texture allocation, and memory leaks.
+* Reuse rendering resources and cache text layouts where appropriate. Handle GPU memory pressure and WebGL context loss safely.
+* If needed, use an optimized lower-resolution preview while preserving the original footage quality for export.
+* Never silently force exports to 30 FPS or reduce the final export resolution to hide performance issues.
+
+**6. Testing and Data Safety**
+
+* Test adding, editing, moving, resizing, and deleting multiple text clips while playing, pausing, and seeking through the timeline, including near the end of long videos.
+* Verify autosave with all editing tools and confirm that projects reopen with their latest saved changes.
+* Preserve all existing fonts, text animations, backgrounds, transitions, effects, filters, audio tools, and timeline functionality.
+
+**Important:** First inspect the existing code and identify the root causes. Fix the underlying rendering and saving implementations instead of applying temporary visual workarounds. Make changes compatible with the existing architecture, preserve the current layout, and do not break working features.
