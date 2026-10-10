@@ -3,7 +3,7 @@ import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
   HardDrive, Info, Layers2, LockKeyhole, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
-  RefreshCw, Scissors, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
+  RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
 import {
@@ -23,6 +23,8 @@ import {
   type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
 } from '@/lib/composition';
 import { getExportFrameCount, getExportProgress, getExportVideoBitrate } from '@/lib/export-utils';
+import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
+import cutlineAppIcon from '@/assets/cutline-app-icon.svg';
 import {
   adjustTimelineZoom, formatTimelineTick, getTimelineEnd, getTimelineRuler,
   MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM,
@@ -41,8 +43,10 @@ const DEFAULT_TRACKS: Track[] = [
   { id: 'text-1', name: 'Text 1', kind: 'text', order: 2, muted: false, visible: true, locked: false },
 ];
 const TRACK_LABEL_WIDTH = 198;
+const AUTOSAVE_DELAY_MS = 500;
 type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup' | 'templates';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
+type ProjectSaveSnapshot = { project: Project; assets: Asset[] };
 type MarkupToolMode = MarkupTool | 'eraser';
 type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip'; id?: string; x: number; y: number };
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
@@ -132,6 +136,7 @@ async function saveLocalProject(project: Project, assets: Asset[]) {
     tx.objectStore(PROJECT_STORE).put(metadata);
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Project save transaction was aborted.')); };
   });
 }
 async function saveLocalMedia(projectId: string, assets: Asset[]) {
@@ -143,6 +148,7 @@ async function saveLocalMedia(projectId: string, assets: Asset[]) {
     assets.forEach((asset) => store.put({ key: `${projectId}:${asset.id}`, projectId, asset }));
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media save transaction was aborted.')); };
   });
 }
 async function readLocalProjects(): Promise<SavedProject[]> {
@@ -399,6 +405,7 @@ function Home() {
   const [exportProgress, setExportProgress] = useState(0);
   const [exportElapsed, setExportElapsed] = useState(0);
   const [dropActive, setDropActive] = useState(false);
+  const [mediaImporting, setMediaImporting] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('saving');
   const [markupTool, setMarkupTool] = useState<MarkupToolMode>('pen');
   const [markupColor, setMarkupColor] = useState('#ff3b30');
@@ -438,6 +445,12 @@ function Home() {
   const future = useRef<Project[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
   const saveRevision = useRef(0);
+  const saveQueue = useRef<((snapshot: ProjectSaveSnapshot) => Promise<void>) | null>(null);
+  if (!saveQueue.current) {
+    saveQueue.current = createSerializedWriteQueue(({ project: snapshotProject, assets: snapshotAssets }) =>
+      retryWrite(() => saveLocalProject(snapshotProject, snapshotAssets)),
+    );
+  }
   const trimDrag = useRef<{
     clipId: string;
     edge: 'start' | 'end';
@@ -453,6 +466,12 @@ function Home() {
   const isPlayingRef = useRef(false);
   const projectRef = useRef(project);
   projectRef.current = project;
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const persistProjectSnapshot = useCallback((nextProject: Project, nextAssets: Asset[]) => {
+    if (!saveQueue.current) throw new Error('Project save queue is unavailable.');
+    return saveQueue.current({ project: nextProject, assets: nextAssets });
+  }, []);
   const getAudioRef = (clipId: string) => {
     let callback = audioRefCallbacks.current.get(clipId);
     if (!callback) {
@@ -538,28 +557,67 @@ function Home() {
 
   useEffect(() => {
     if (!projectHydrated) return;
-    window.clearTimeout(saveTimer.current);
+    if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current);
     const revision = ++saveRevision.current;
     setSaveState('dirty');
     saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = undefined;
       if (revision !== saveRevision.current) return;
       setSaveState('saving');
-      saveLocalProject(project, assets)
+      persistProjectSnapshot(project, assets)
         .then(() => {
-          if (revision === saveRevision.current) {
+          if (
+            revision === saveRevision.current &&
+            saveTimer.current === undefined &&
+            projectRef.current === project &&
+            assetsRef.current === assets
+          ) {
             setSaveState('saved');
             void readLocalProjects().then(setSavedProjects).catch(() => undefined);
           }
         })
         .catch(() => {
-          if (revision === saveRevision.current) {
+          if (
+            revision === saveRevision.current &&
+            saveTimer.current === undefined &&
+            projectRef.current === project &&
+            assetsRef.current === assets
+          ) {
             setSaveState('error');
             notify('Could not save locally. Check browser storage space and permissions.', true);
           }
         });
-    }, 650);
-    return () => window.clearTimeout(saveTimer.current);
-  }, [project, assets, notify, projectHydrated]);
+    }, AUTOSAVE_DELAY_MS);
+    return () => {
+      if (saveTimer.current !== undefined) {
+        window.clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+      }
+    };
+  }, [project, assets, notify, persistProjectSnapshot, projectHydrated]);
+
+  useEffect(() => {
+    if (!projectHydrated) return;
+    const flushOnPageHide = () => {
+      if (saveState === 'saved' && saveTimer.current === undefined) return;
+      if (saveTimer.current !== undefined) {
+        window.clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+      }
+      void persistProjectSnapshot(projectRef.current, assetsRef.current).catch(() => undefined);
+    };
+    const warnBeforeDiscard = (event: BeforeUnloadEvent) => {
+      if (saveState === 'saved') return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('pagehide', flushOnPageHide);
+    window.addEventListener('beforeunload', warnBeforeDiscard);
+    return () => {
+      window.removeEventListener('pagehide', flushOnPageHide);
+      window.removeEventListener('beforeunload', warnBeforeDiscard);
+    };
+  }, [persistProjectSnapshot, projectHydrated, saveState]);
 
   useEffect(() => {
     const wrap = previewWrapRef.current;
@@ -911,30 +969,46 @@ function Home() {
   }, [exporting]);
 
   const importFiles = useCallback(async (files: FileList | File[]) => {
+    setMediaImporting(true);
+    const targetProjectId = projectRef.current.id;
     const additions: Asset[] = [];
-    for (const file of Array.from(files)) {
-      if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
-        /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|ogg|m4a|aac|flac|jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name))) {
-        notify(`${file.name} is not a supported media file.`, true); continue;
+    try {
+      for (const file of Array.from(files)) {
+        if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
+          /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|ogg|m4a|aac|flac|jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name))) {
+          notify(`${file.name} is not a supported media file.`, true); continue;
+        }
+        const asset: Asset = { id: uid(), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, blob: file };
+        try { await inspectImportedAsset(asset); } catch { notify(`Could not read metadata for ${file.name}; it can still be added, but playback or export may not be supported.`, true); }
+        additions.push(asset);
       }
-      const asset: Asset = { id: uid(), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, blob: file };
-      try { await inspectImportedAsset(asset); } catch { notify(`Could not read metadata for ${file.name}; it can still be added, but playback or export may not be supported.`, true); }
-      additions.push(asset);
-    }
-    if (additions.length) {
-      try {
-        await saveLocalMedia(projectRef.current.id, additions);
-      } catch {
-        notify('Could not store imported media in browser storage. Free disk space or remove large files, then retry.', true);
-        return;
+      if (additions.length) {
+        if (projectRef.current.id !== targetProjectId) {
+          notify('The active project changed during import. Select the intended project and retry.', true);
+          return;
+        }
+        setSaveState('saving');
+        try {
+          await saveLocalMedia(targetProjectId, additions);
+        } catch {
+          setSaveState('error');
+          notify('Could not store imported media in browser storage. Free disk space or remove large files, then retry.', true);
+          return;
+        }
+        if (projectRef.current.id !== targetProjectId) {
+          notify('Media was stored in its original project. Reopen that project to see the imported files.', true);
+          return;
+        }
+        setAssets((current) => [...current, ...additions]);
+        setSelectedAssetId(additions[0].id);
+        const silentVideos = additions.filter((asset) => isVideo(asset) && asset.hasAudio === false);
+        const audioNote = silentVideos.length
+          ? ` No embedded audio track: ${silentVideos.map((asset) => asset.name).join(', ')}.`
+          : '';
+        notify(`${additions.length} file${additions.length === 1 ? '' : 's'} added to this device's media bin.${audioNote}`);
       }
-      setAssets((current) => [...current, ...additions]);
-      setSelectedAssetId(additions[0].id);
-      const silentVideos = additions.filter((asset) => isVideo(asset) && asset.hasAudio === false);
-      const audioNote = silentVideos.length
-        ? ` No embedded audio track: ${silentVideos.map((asset) => asset.name).join(', ')}.`
-        : '';
-      notify(`${additions.length} file${additions.length === 1 ? '' : 's'} added to this device's media bin.${audioNote}`);
+    } finally {
+      setMediaImporting(false);
     }
   }, [notify]);
   const addAssetToTimeline = useCallback((asset: Asset, trackId?: string, at = playhead, asAudio = false) => {
@@ -1358,26 +1432,56 @@ function Home() {
     setPlaying(true);
   };
   const openProjects = async () => {
+    if (mediaImporting) {
+      notify('Wait for media import to finish before changing projects.', true);
+      return;
+    }
     try { setSavedProjects(await readLocalProjects()); setDialog('project'); }
     catch { notify('Could not read projects from local browser storage.', true); }
   };
+  const flushCurrentProjectSave = async () => {
+    if (saveTimer.current !== undefined) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+    }
+    while (true) {
+      const revision = saveRevision.current;
+      const snapshotProject = projectRef.current;
+      const snapshotAssets = assetsRef.current;
+      setSaveState('saving');
+      try {
+        await persistProjectSnapshot(snapshotProject, snapshotAssets);
+      } catch (error) {
+        if (revision === saveRevision.current) setSaveState('error');
+        throw error;
+      }
+      if (
+        revision === saveRevision.current &&
+        saveTimer.current === undefined &&
+        projectRef.current === snapshotProject &&
+        assetsRef.current === snapshotAssets
+      ) {
+        setSaveState('saved');
+        return;
+      }
+    }
+  };
   const saveNow = async () => {
-    window.clearTimeout(saveTimer.current);
-    const revision = ++saveRevision.current;
-    setSaveState('saving');
     try {
-      await saveLocalProject(project, assets);
-      setSavedProjects(await readLocalProjects());
-      if (revision === saveRevision.current) setSaveState('saved');
+      await flushCurrentProjectSave();
+      void readLocalProjects().then(setSavedProjects).catch(() => undefined);
       notify('Project saved locally. Media stays on this device.');
     } catch {
-      if (revision === saveRevision.current) setSaveState('error');
       notify('Save failed. Check browser storage space and permissions.', true);
     }
   };
   const openProject = async (record: SavedProject) => {
+    if (mediaImporting) {
+      notify('Wait for media import to finish before changing projects.', true);
+      return;
+    }
     try {
-      await saveLocalProject(projectRef.current, assets);
+      await flushCurrentProjectSave();
       const records = await readLocalProjects();
       const latestRecord = records.find((item) => item.project.id === record.project.id) || record;
       const localAssets = await readLocalMedia(latestRecord.project.id);
@@ -1390,9 +1494,13 @@ function Home() {
     }
   };
   const newProject = async () => {
+    if (mediaImporting) {
+      notify('Wait for media import to finish before changing projects.', true);
+      return;
+    }
     let records = savedProjects;
     try {
-      await saveLocalProject(projectRef.current, assets);
+      await flushCurrentProjectSave();
       records = await readLocalProjects();
       setSavedProjects(records);
     } catch {
@@ -1403,6 +1511,7 @@ function Home() {
   };
   const saveProjectAs = async () => {
     const source = projectRef.current;
+    const sourceAssets = assetsRef.current;
     const suggestedName = `${source.name} copy`;
     const requestedName = window.prompt('Save a separate copy as', suggestedName);
     const name = requestedName?.trim();
@@ -1423,11 +1532,14 @@ function Home() {
       ...(source.removedAssetIds ? { removedAssetIds: [...source.removedAssetIds] } : {}),
     };
     const revision = ++saveRevision.current;
-    window.clearTimeout(saveTimer.current);
+    if (saveTimer.current !== undefined) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+    }
     setSaveState('saving');
     try {
-      await saveLocalMedia(duplicate.id, assets);
-      await saveLocalProject(duplicate, assets);
+      await saveLocalMedia(duplicate.id, sourceAssets);
+      await persistProjectSnapshot(duplicate, sourceAssets);
       const records = await readLocalProjects();
       history.current = []; future.current = [];
       setProject(duplicate);
@@ -1471,7 +1583,7 @@ function Home() {
     try {
       await saveLocalMedia(projectRef.current.id, [nextAssets.find((item) => item.id === asset.id)!]);
       setAssets(nextAssets);
-      await saveLocalProject(projectRef.current, nextAssets);
+      await persistProjectSnapshot(projectRef.current, nextAssets);
       setSavedProjects(await readLocalProjects());
       notify('Media label updated. The source file was not renamed.');
     } catch {
@@ -1484,7 +1596,7 @@ function Home() {
     try {
       await saveLocalMedia(projectRef.current.id, [duplicate]);
       setAssets(nextAssets);
-      await saveLocalProject(projectRef.current, nextAssets);
+      await persistProjectSnapshot(projectRef.current, nextAssets);
       setSavedProjects(await readLocalProjects());
       setSelectedAssetId(duplicate.id);
       notify('Media item duplicated in this project.');
@@ -1509,7 +1621,7 @@ function Home() {
     commit(() => nextProject);
     if (selectedClipId && linkedClips.some((clip) => clip.id === selectedClipId)) setSelectedClipId(null);
     if (selectedAssetId === asset.id) setSelectedAssetId(null);
-    void saveLocalProject(nextProject, assets).then(() => notify('Media reference removed. The source file was left untouched.'))
+    void persistProjectSnapshot(nextProject, assetsRef.current).then(() => notify('Media reference removed. The source file was left untouched.'))
       .catch(() => notify('Could not save the project after removing this media reference.', true));
   };
   const showMediaDetails = (asset: Asset) => {
@@ -1532,7 +1644,7 @@ function Home() {
     const updatedProject = { ...record.project, name: name.trim() };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
-      await saveLocalProject(updatedProject, projectAssets);
+      await persistProjectSnapshot(updatedProject, projectAssets);
       if (projectRef.current.id === record.project.id) commit(() => updatedProject);
       setSavedProjects(await readLocalProjects());
       notify('Project renamed.');
@@ -1545,7 +1657,7 @@ function Home() {
     try {
       const projectAssets = await readLocalMedia(record.project.id);
       await saveLocalMedia(duplicateProject.id, projectAssets);
-      await saveLocalProject(duplicateProject, projectAssets);
+      await persistProjectSnapshot(duplicateProject, projectAssets);
       setSavedProjects(await readLocalProjects());
       notify(`Created “${duplicateProject.name}” as a separate project.`);
     } catch {
@@ -2209,18 +2321,29 @@ function Home() {
         else if (event.dataTransfer.files.length) void importFiles(event.dataTransfer.files);
       }}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark"><Scissors size={16} strokeWidth={2.6} /></span><span>cutline</span></div>
+        <div className="brand" aria-label="Cutline">
+          <img className="brand-mark" src={cutlineAppIcon} alt="" />
+          <span className="brand-name">Cutline</span>
+        </div>
         <div className={`save-state save-state--${saveState}`} role="status" aria-live="polite" data-testid="status-save-state">
-          <span aria-hidden="true">●</span>
-          {saveState === 'saved' ? 'Saved'
-            : saveState === 'dirty' ? 'Unsaved changes'
-              : saveState === 'saving' ? 'Saving…'
-                : 'Save failed — check browser storage'}
+          {saveState === 'saved'
+            ? <Check className="save-state__icon" size={13} strokeWidth={2.4} aria-hidden="true" />
+            : saveState === 'saving'
+              ? <RefreshCw className="save-state__icon save-state__icon--spin" size={13} aria-hidden="true" />
+              : saveState === 'error'
+                ? <CircleAlert className="save-state__icon" size={13} aria-hidden="true" />
+                : <Activity className="save-state__icon" size={13} aria-hidden="true" />}
+          <span className="save-state__label">
+            {saveState === 'saved' ? 'Saved'
+              : saveState === 'dirty' ? 'Unsaved changes'
+                : saveState === 'saving' ? 'Saving…'
+                  : 'Save failed · use Save to retry'}
+          </span>
         </div>
         <div className="top-spacer" />
         <button className="icon-btn" onClick={undo} disabled={!history.current.length} title="Undo (Ctrl+Z)" data-testid="button-undo"><Undo2 size={16} /></button>
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
-        <button className="btn" onClick={openProjects} title="Manage projects" aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
+        <button className="btn" onClick={openProjects} disabled={mediaImporting} title={mediaImporting ? 'Wait for media import to finish' : 'Manage projects'} aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
         <button className="btn primary" onClick={() => setDialog('export')} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>

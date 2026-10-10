@@ -49,15 +49,19 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .mono { font-family: var(--app-font-mono); font-variant-numeric: tabular-nums; }
 
 .workspace { height: 100dvh; min-height: 640px; display: flex; flex-direction: column; overflow: hidden; background: #171a20; }
-.topbar { height: 54px; flex: 0 0 54px; min-width:0; display:flex; align-items:center; gap:13px; padding:0 18px; background:#1c2027; border-bottom:1px solid #30353e; }
-.brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:-.06em; font-size:18px; color:#f0eee9; }
-.brand-mark { width:25px; height:25px; display:grid; place-items:center; background:#efb94e; color:#22252a; border-radius:6px; }
-.save-state { color:#8f969f; font-size:10px; display:flex; gap:6px; align-items:center; white-space:nowrap; flex-shrink:0; }
-.save-state span { color:#8f969f; }
-.save-state--saved,.save-state--saved span { color:#73bd93; }
-.save-state--dirty,.save-state--dirty span { color:#e8b650; }
-.save-state--saving,.save-state--saving span { color:#c29b51; }
-.save-state--error,.save-state--error span { color:#e08075; }
+.topbar { height:54px; flex:0 0 54px; min-width:0; display:flex; align-items:center; gap:13px; padding:0 18px; background:#1c2027; border-bottom:1px solid #30353e; }
+.brand { display:flex; align-items:center; gap:9px; color:#f0eee9; font-family:Inter,var(--app-font-sans); font-size:16px; font-weight:600; letter-spacing:-.025em; }
+.brand-mark { width:31px; height:31px; display:block; object-fit:contain; border:1px solid #efb94e35; border-radius:8px; box-shadow:0 3px 10px #0003; }
+.brand-name { line-height:1; }
+.save-state { min-height:27px; display:flex; align-items:center; flex-shrink:0; gap:7px; padding:4px 9px; border:1px solid #363d46; border-radius:999px; color:#a1a8b0; background:#22262d; font-size:11px; font-weight:500; white-space:nowrap; }
+.save-state__icon { flex:none; }
+.save-state--saved { color:#a1d0ad; background:#1b2720; border-color:#335041; }
+.save-state--dirty { color:#e5c16f; background:#29251d; border-color:#56462b; }
+.save-state--saving { color:#d6b56f; background:#29251d; border-color:#55472c; }
+.save-state--error { color:#e7a39b; background:#2b211f; border-color:#5c3633; }
+.save-state__icon--spin { animation:save-state-spin 1.1s linear infinite; }
+@keyframes save-state-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .save-state__icon--spin { animation:none; } }
 .top-spacer { flex:1; }
 .btn { border:1px solid #3a404a; background:#242932; color:#cbd0d5; border-radius:5px; height:32px; display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:0 11px; font-size:11px; font-weight:700; transition:background .14s,color .14s,border-color .14s; white-space:nowrap; }
 .btn:hover:not(:disabled) { background:#303640; color:#fff; border-color:#505762; }
