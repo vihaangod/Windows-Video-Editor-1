@@ -1,0 +1,167 @@
+## Cutline Editor — Separate Clips Track & Track Upload (+) Button
+
+Update the existing Cutline video editor. Inspect the current timeline and track-management code first, then implement the following features properly. Preserve the existing dark-and-gold UI and all current editing functionality.
+
+### 1. Add a Separate Clips Track
+
+- Create a dedicated **Clips track** for imported video clips, separate from the existing video timeline track if necessary.
+- Video clips should be placed on this Clips track when added to the timeline.
+- Keep audio files on audio tracks (A1, A2, etc.).
+- Keep text, titles, filters, and transitions on their appropriate existing tracks.
+- Do not mix audio clips with video clips on the same track.
+- Existing projects must remain compatible, and their clips must not disappear or change position after this update.
+
+### 2. Add a (+) Upload Button Beside Track Controls
+
+Look at the row of small icons and controls beside the track names in the timeline. Add a small **+ icon button** alongside those existing controls.
+
+The + button should allow users to upload media directly to the selected track.
+
+**Supported uploads through this button:**
+
+- Video clips (`.mp4`, `.mov`, `.mkv`, `.webm`, and other supported video formats).
+- Audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and other supported audio formats).
+
+**Not supported through this button:**
+
+- Text or title creation.
+- Text files or subtitle files.
+- Do not use this button to upload text, titles, or project files.
+
+### 3. Smart Track-Based Uploading
+
+When the user clicks the + button:
+
+- On the **Clips track**, open the file picker for video files.
+- On an **Audio track**, open the file picker for audio files.
+- Validate the selected file types before importing.
+- If the user selects an incompatible file type, show a clear message and do not add it to the wrong track.
+- Allow multiple compatible files to be selected when supported.
+- Import the files into the currently open project's Media Library and place the clips on the selected track at the playhead, following existing timeline placement rules.
+- If multiple files are imported, place them sequentially without unintentionally overlapping or replacing existing clips.
+- Do not create a new project when uploading media.
+- Do not replace the current project or clear its timeline.
+- Do not silently overwrite existing media or project data.
+- Keep the normal **Import Media** feature available separately.
+
+### 4. UI and Interaction
+
+- Use a compact plus icon that matches the existing timeline toolbar icons.
+- Add a tooltip such as **“Add video clips”** or **“Add audio”**, depending on the track.
+- Clicking the plus button must open the actual file picker and complete the import workflow, not just display a placeholder.
+- Keep the existing track controls, mute, lock, visibility, and other actions working.
+- Ensure the button is usable at different window sizes and does not clutter the timeline.
+
+### 5. Persistence and Testing
+
+- Save imported media references and timeline placements to the current project.
+- After refreshing the website or reopening the Electron desktop app, imported clips must still appear in the correct tracks.
+- Ensure browser and Electron versions both work using their respective secure file-import mechanisms.
+- Test video upload on the Clips track, audio upload on an Audio track, multiple-file import, invalid file types, existing-project preservation, and reopening saved projects.
+
+**Important:** Implement this in the actual timeline and project data model. Do not merely change the appearance of the interface or add non-functional buttons. Preserve all existing Cutline features.
+
+
+
+## Cutline — Standalone Transitions Track with Single-Clip Effects
+
+Update the existing Cutline video editor. Inspect the current timeline, transition engine, preview renderer, and export pipeline before making changes. Preserve the existing dark-and-gold UI and all working features.
+
+### 1. Transitions Must Work on a Single Video
+
+Currently, the transition panel asks users to select two adjacent video clips. Change this behavior.
+
+- Allow transitions to be applied to a single imported video clip, even if no second clip exists.
+- Support entrance transitions, exit transitions, and transitions between adjacent clips.
+- Entrance transitions animate the beginning of the selected clip. Examples: slide in from left/right/top/bottom, fade in, wipe in, zoom in.
+- Exit transitions animate the end of the selected clip. Examples: slide out in any direction, fade out, wipe out, zoom out.
+- Between adjacent clips, support transitions such as Cross Dissolve, Slide, Wipe, and Zoom.
+- If a transition requires two clips, show a clear indication that it is a between-clips transition. Never silently apply the wrong transition type.
+- A single-clip entrance or exit transition must work without requiring a second clip.
+
+### 2. Create a Dedicated Transitions Track
+
+Add a separate **Transitions track** to the timeline.
+
+- Keep transitions separate from video, audio, text, and filter tracks.
+- Create the track when the first transition is added, and keep it visible while transitions exist.
+- Hide or remove the track when all transitions are deleted, following the editor's existing dynamic-track conventions.
+- Display each transition as a visible timeline block at its actual time position.
+- For entrance transitions, place the block at the start of the target clip. For exit transitions, place it at the end. For between-clip transitions, place it at the boundary between the two clips.
+- Display the transition name and duration inside the block whenever space permits.
+- Make each block selectable, movable where valid, and deletable.
+- Prevent invalid placements, such as a between-clips transition without two adjacent compatible clips.
+- Multiple transitions must be supported on the same video or project, subject to valid timing and overlap rules.
+
+### 3. Right-Click to Edit Transition Duration
+
+Implement a working right-click context menu on every transition block.
+
+Include these options:
+
+- **Edit Duration**
+- **Change Transition**
+- **Change Direction**, where applicable
+- **Duplicate**
+- **Delete**
+
+When the user chooses Edit Duration, open a small input or dialog that allows a custom duration in seconds, such as 0.3s, 0.6s, 1s, 1.5s, or a manually entered value.
+
+Requirements:
+
+- Validate duration and prevent invalid or negative values.
+- Respect the available clip duration and the transition type's timing constraints.
+- Update the transition block's displayed width and duration immediately.
+- Update preview playback and final export to use the new duration.
+- Do not require users to reopen the project or refresh the website.
+- Do not let right-click trigger the browser's default context menu over transition blocks.
+
+### 4. Transition Direction Controls
+
+For directional transitions, support:
+
+- Left
+- Right
+- Up
+- Down
+
+Use clear names and consistent direction behavior. For example, **Slide In From Right** means the image enters from the right side of the frame.
+
+Provide a transition selector with searchable effects, direction controls, and a duration setting. Keep the existing Clip Tools panel integrated with this functionality.
+
+### 5. Accurate Preview and Export
+
+- Transitions must visibly animate in the timeline preview, not just appear as labels.
+- The exported video must render the same transition with the same direction, timing, and duration.
+- Ensure transitions work with 16:9, 9:16, 4:5, and 1:1 projects.
+- Handle playback, seeking, trimming, splitting, moving, and deleting clips without leaving transitions attached to incorrect clips.
+- If a target clip is shortened, automatically validate its transitions and adjust or flag invalid durations safely.
+- Do not change the original media file.
+
+### 6. Save and Restore
+
+Persist transition type, direction, duration, target clip ID, transition position, and transition mode (entrance, exit, or between-clips) in the current project.
+
+After refresh or reopening the Electron desktop app, restore all transition blocks and their settings correctly.
+
+Maintain compatibility with existing projects and existing transitions.
+
+### 7. Test Before Finishing
+
+Test at least:
+
+1. Add an entrance transition to a single video clip.
+2. Add an exit transition to a single video clip.
+3. Add a between-clips transition to two adjacent clips.
+4. Add several transitions to different points in one video.
+5. Right-click a transition and change its duration.
+6. Change direction and transition type.
+7. Duplicate and delete transitions.
+8. Preview playback and exported video use identical timing.
+9. Save, refresh, and reopen the project without losing transitions.
+
+**Important:** Implement actual transition animation and rendering logic in the existing editor. Do not create a UI-only mockup, and do not break current timeline editing, audio, text, filters, or project saving.
+
+
+
+inhe mix krde and chota krde pr proper
