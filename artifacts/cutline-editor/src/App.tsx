@@ -1,7 +1,7 @@
 import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
-  Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
+  Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen,
   Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
@@ -99,7 +99,7 @@ const getCanvasSizeValue = (width: number, height: number) => {
   const value = `${width}x${height}`;
   return CANVAS_SIZES.some((preset) => preset.value === value) ? value : 'custom';
 };
-type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup' | 'templates';
+type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 type ProjectSaveSnapshot = { project: Project; assets: Asset[] };
 type MarkupToolMode = MarkupTool | 'eraser';
@@ -136,7 +136,6 @@ const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactN
   { id: 'transitions', label: 'Transitions', icon: <Sparkles size={16} /> },
   { id: 'filters', label: 'Filters', icon: <SlidersHorizontal size={16} /> },
   { id: 'markup', label: 'Markup', icon: <Pencil size={16} /> },
-  { id: 'templates', label: 'Templates', icon: <Grid2X2 size={16} /> },
 ];
 const createProject = (name = 'New Project 1', folderId: string | null = null): Project => ({
   id: crypto.randomUUID(), name, folderId, width: 1920, height: 1080, frameRate: 30,
@@ -3203,7 +3202,7 @@ function Home() {
             </div>
             <div className="library-foot">Media stays on this device. Removing an item only removes it from this project.</div>
           </>}
-          {(libraryWorkspace === 'text' || libraryWorkspace === 'templates') && <TitleTemplatesPanel onAdd={addTitleTemplate} />}
+          {libraryWorkspace === 'text' && <TitleTemplatesPanel onAdd={addTitleTemplate} />}
           {(libraryWorkspace === 'effects' || libraryWorkspace === 'transitions' || libraryWorkspace === 'filters') &&
             <EffectWorkspace
               workspace={libraryWorkspace}
