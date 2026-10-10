@@ -26,7 +26,7 @@ import { getExportFrameCount, getExportProgress, getExportVideoBitrate } from '@
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
 import cutlineAppIcon from '@/assets/cutline-app-icon.svg';
 import {
-  adjustTimelineZoom, formatTimelineTick, getTimelineEnd, getTimelineRuler,
+  adjustTimelineZoom, formatTimelineTick, getPlaybackDeltaSeconds, getTimelineEnd, getTimelineRuler,
   MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM,
 } from '@/lib/timeline-geometry';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
@@ -888,6 +888,7 @@ function Home() {
         video.muted = true;
         video.playsInline = true;
         video.onloadeddata = () => setMediaRevision((revision) => revision + 1);
+        video.onseeked = () => setMediaRevision((revision) => revision + 1);
         video.src = url;
         video.load();
         previewMedia.current.set(asset.id, video);
@@ -910,7 +911,8 @@ function Home() {
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     if (!canvas) return;
-    const previewSize = getPreviewCanvasSize(project.width, project.height);
+    const playbackPreviewMax = playing && Math.max(project.width, project.height) >= 3840 ? 1280 : 1920;
+    const previewSize = getPreviewCanvasSize(project.width, project.height, playbackPreviewMax);
     if (canvas.width !== previewSize.width) canvas.width = previewSize.width;
     if (canvas.height !== previewSize.height) canvas.height = previewSize.height;
     const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -921,7 +923,8 @@ function Home() {
   useEffect(() => {
     const canvas = previewOverlayCanvasRef.current;
     if (!canvas) return;
-    const previewSize = getPreviewCanvasSize(project.width, project.height);
+    const playbackPreviewMax = playing && Math.max(project.width, project.height) >= 3840 ? 1280 : 1920;
+    const previewSize = getPreviewCanvasSize(project.width, project.height, playbackPreviewMax);
     if (canvas.width !== previewSize.width) canvas.width = previewSize.width;
     if (canvas.height !== previewSize.height) canvas.height = previewSize.height;
     const context = canvas.getContext('2d', { alpha: true, desynchronized: true });
@@ -983,7 +986,7 @@ function Home() {
     let previous = performance.now();
     const tick = (now: number) => {
       if (now - previous >= 30) {
-        const delta = Math.min(.12, (now - previous) / 1000);
+        const delta = getPlaybackDeltaSeconds(previous, now);
         previous = now;
         setPlayhead((time) => {
           if (time + delta >= contentEnd) { setPlaying(false); return contentEnd; }

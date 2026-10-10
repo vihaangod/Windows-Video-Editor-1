@@ -14,6 +14,11 @@ export function getTimelineEnd(contentEnd: number) {
   return Math.max(INITIAL_TIMELINE_SECONDS, safeContentEnd + 3);
 }
 
+export function getPlaybackDeltaSeconds(previousTime: number, currentTime: number) {
+  if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime)) return 0;
+  return Math.max(0, (currentTime - previousTime) / 1000);
+}
+
 export function getTimelineTickInterval(duration: number, pixelsPerSecond: number) {
   const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
   const safeScale = Number.isFinite(pixelsPerSecond) ? Math.max(0.01, pixelsPerSecond) : 0.01;

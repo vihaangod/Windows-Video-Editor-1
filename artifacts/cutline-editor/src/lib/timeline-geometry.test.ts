@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   adjustTimelineZoom,
   formatTimelineTick,
+  getPlaybackDeltaSeconds,
   getTimelineEnd,
   getTimelineRuler,
   MAX_TIMELINE_ZOOM,
@@ -33,4 +34,11 @@ test('timeline zoom reaches wide and close views without exceeding its bounds', 
   assert.equal(adjustTimelineZoom(MIN_TIMELINE_ZOOM, -1), MIN_TIMELINE_ZOOM);
   assert.equal(adjustTimelineZoom(MAX_TIMELINE_ZOOM, 1), MAX_TIMELINE_ZOOM);
   assert.ok(adjustTimelineZoom(1, 1) > 1);
+});
+
+test('playback keeps wall-clock time after delayed render frames', () => {
+  assert.equal(getPlaybackDeltaSeconds(1000, 1033), 0.033);
+  assert.equal(getPlaybackDeltaSeconds(1000, 1450), 0.45);
+  assert.equal(getPlaybackDeltaSeconds(1450, 1000), 0);
+  assert.equal(getPlaybackDeltaSeconds(Number.NaN, 1000), 0);
 });

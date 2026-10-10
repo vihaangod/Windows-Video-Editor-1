@@ -165,6 +165,11 @@ export function getPreviewCanvasSize(width: number, height: number, maxDimension
   };
 }
 
+export function shouldDeferPreviewVideoFrame(readyState: number, seeking: boolean, currentTime: number, targetTime: number) {
+  return readyState < 2 || seeking || !Number.isFinite(currentTime) || !Number.isFinite(targetTime) ||
+    Math.abs(currentTime - targetTime) > .32;
+}
+
 export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
 
 export const DEFAULT_TRANSFORM: ClipTransform = {
@@ -630,6 +635,31 @@ export function renderProjectFrame(
   const layer = options.layer ?? 'all';
   const scaleX = context.canvas.width / Math.max(1, project.width);
   const scaleY = context.canvas.height / Math.max(1, project.height);
+  const activeVisual = project.clips.filter((clip) => {
+    if (layer === 'base' && clip.text) return false;
+    if (layer === 'overlay' && !clip.text) return false;
+    const track = renderIndex
+      ? renderIndex.tracksById.get(clip.trackId)
+      : project.tracks.find((item) => item.id === clip.trackId);
+    if (!track || (track.kind !== 'video' && track.kind !== 'text')) return false;
+    return track.visible !== false && time >= clip.timelineStart && time < clip.timelineStart + getClipDuration(clip);
+  });
+
+  // Keep the last complete preview frame visible while a new source frame is decoding.
+  if (layer === 'base') {
+    for (const clip of activeVisual) {
+      const source = clip.assetId ? mediaByAsset.get(clip.assetId) : undefined;
+      if (typeof HTMLVideoElement === 'undefined' || !(source instanceof HTMLVideoElement)) continue;
+      const sourceTime = clip.sourceIn + (time - clip.timelineStart) * clip.speed;
+      if (shouldDeferPreviewVideoFrame(source.readyState, source.seeking, source.currentTime, sourceTime)) {
+        if (source.readyState >= 2 && !source.seeking && Number.isFinite(sourceTime)) {
+          try { source.currentTime = Math.max(0, sourceTime); } catch { /* metadata may still be loading */ }
+        }
+        return;
+      }
+    }
+  }
+
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.save();
   context.filter = 'none';
@@ -644,15 +674,6 @@ export function renderProjectFrame(
     context.fillRect(0, 0, project.width, project.height);
   }
 
-  const activeVisual = project.clips.filter((clip) => {
-    if (layer === 'base' && clip.text) return false;
-    if (layer === 'overlay' && !clip.text) return false;
-    const track = renderIndex
-      ? renderIndex.tracksById.get(clip.trackId)
-      : project.tracks.find((item) => item.id === clip.trackId);
-    if (!track || (track.kind !== 'video' && track.kind !== 'text')) return false;
-    return track.visible !== false && time >= clip.timelineStart && time < clip.timelineStart + getClipDuration(clip);
-  });
   const activeTransitions = (layer === 'overlay' ? [] : project.transitions || []).flatMap((transition) => {
     const fromClip = renderIndex
       ? renderIndex.clipsById.get(transition.fromClipId)

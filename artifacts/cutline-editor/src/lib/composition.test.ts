@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getPreviewCanvasSize, renderProjectFrame, type Project } from './composition.ts';
+import { getPreviewCanvasSize, renderProjectFrame, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -61,8 +61,16 @@ function textProject(): Project {
 test('preview backing stores preserve 1080p and cap 4K dimensions without changing project settings', () => {
   assert.deepEqual(getPreviewCanvasSize(1920, 1080), { width: 1920, height: 1080 });
   assert.deepEqual(getPreviewCanvasSize(3840, 2160), { width: 1920, height: 1080 });
+  assert.deepEqual(getPreviewCanvasSize(3840, 2160, 1280), { width: 1280, height: 720 });
   assert.deepEqual(getPreviewCanvasSize(7680, 4320), { width: 1920, height: 1080 });
   assert.equal(textProject().frameRate, 60);
+});
+
+test('preview waits for a decoded video frame instead of clearing to black during a seek', () => {
+  assert.equal(shouldDeferPreviewVideoFrame(1, false, 0, 0), true);
+  assert.equal(shouldDeferPreviewVideoFrame(2, true, 1, 1), true);
+  assert.equal(shouldDeferPreviewVideoFrame(2, false, 1, 1.5), true);
+  assert.equal(shouldDeferPreviewVideoFrame(2, false, 1, 1.2), false);
 });
 
 test('base and transparent overlay render independently at scaled preview resolution', () => {
