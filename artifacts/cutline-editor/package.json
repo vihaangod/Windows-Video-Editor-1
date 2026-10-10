@@ -118,6 +118,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
     "mediabunny": "^1.61.3"
   }
 }
