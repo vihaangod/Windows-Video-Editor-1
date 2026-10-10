@@ -1,0 +1,578 @@
+# CUTLINE — Complete Professional Video Editor Upgrade
+
+Upgrade the existing Cutline video editor into a reliable, professional, timeline-based video editing application. First inspect the entire existing codebase, architecture, UI, project storage, timeline engine, preview renderer, media handling, and export pipeline.
+
+Implement the requirements below in the existing application. Preserve the current dark-and-gold theme, existing projects, and all working features.
+
+**Critical rules:**
+- Build real, functional features, not UI-only placeholders.
+- Do not replace the existing project with a new application.
+- Do not unnecessarily rewrite working code.
+- Reuse and improve existing components wherever possible.
+- Fix existing bugs related to these features before adding duplicate functionality.
+- Ensure the timeline preview and exported video use the same editing logic.
+- Keep performance suitable for a laptop with an Intel Core i3, integrated graphics, and 8 GB RAM.
+- Test the actual workflows and report only verified results.
+
+---
+
+# 1. Templates — Exactly 20 Ready-to-Use Templates
+
+Create a Templates section containing exactly 20 distinct, usable video editing templates.
+
+Include templates for:
+- Cinematic videos
+- Gaming montages
+- YouTube intros
+- YouTube Shorts
+- Instagram Reels
+- Travel videos
+- Vlogs
+- Product showcases
+- Photo slideshows
+- Lyric-style videos
+- Minimal videos
+- Documentary-style videos
+- Event highlights
+- Birthday videos
+- Before-and-after videos
+- Promotional videos
+- Social media announcements
+- Tutorial videos
+- Fashion or lifestyle edits
+- General-purpose storytelling
+
+Requirements:
+- Every template must have a unique name, design, and purpose.
+- Templates must be editable after application.
+- Applying a template should create a functional timeline structure with relevant titles, effects, transitions, and media placeholders.
+- Users must be able to replace placeholder media with their own imported files.
+- Templates must work with actual playback, saving, and export.
+- Do not implement templates as static preview cards only.
+- Keep Templates separate from Titles & Texts.
+
+---
+
+# 2. Titles & Texts — 10 New Presets
+
+Add 10 distinct title and text presets with different typography, placement, animation, and visual styles.
+
+Include cinematic titles, subtitles, lower thirds, gaming captions, bold social-media captions, minimal titles, animated introductions, and other useful styles.
+
+Allow users to edit:
+- Text content
+- Font family and size
+- Colour and alignment
+- Position
+- Background and outline, where supported
+- Animation and duration
+- Entrance and exit timing
+
+Titles must appear on an appropriate overlay/video track. They must not overwrite the main video and must render correctly in preview and export.
+
+---
+
+# 3. Filters — 6 New Working Filters
+
+Add six distinct filters with visibly different results:
+
+1. Cinematic
+2. Vintage
+3. Warm
+4. Cool
+5. Black & White
+6. Vibrant
+
+Each filter must:
+- Produce a distinct visual result.
+- Have adjustable intensity.
+- Work with the actual video renderer.
+- Support timeline-based application.
+- Render consistently in preview and export.
+
+Do not create six presets that all use the same visual settings.
+
+---
+
+# 4. Dedicated Filter / Effects Timeline Track
+
+Implement a proper timeline-based filter/effect system similar to professional video editors.
+
+## Dynamic Effects Track
+
+- Add a dedicated Filter / Effects track below the video tracks when it is needed.
+- Do not show an empty Effects/Filters track in a new project.
+- When the first filter or effect is applied, create the track automatically.
+- Keep the track visible while it contains effect clips.
+- Hide it when its last effect clip is removed.
+- Restore it correctly when reopening the project.
+
+## Creating Filter Clips
+
+When the user selects and applies a filter:
+- Create an individual filter clip on the Effects/Filters track.
+- Set its default duration to 5 seconds.
+- Start it at the current playhead position.
+- If no video clip is selected, apply it to the appropriate video clip under the playhead.
+- If no valid target video exists, show a helpful message.
+- Do not automatically apply a selected filter to the entire video.
+- Display the filter name, duration, and a distinct visual style inside the timeline clip.
+
+Support multiple filter clips at different times.
+
+## Filter Clip Editing
+
+Allow users to:
+- Move the entire filter clip.
+- Drag its left edge to change the start time.
+- Drag its right edge to increase or decrease duration.
+- Set an exact duration through a numeric field or equivalent control.
+- Select, duplicate, and delete individual filter clips.
+- Adjust the intensity of each filter clip independently.
+- See clear visual feedback when selecting or resizing a clip.
+- Use timeline zoom and scrolling normally.
+
+Filter clips should not extend beyond their intended target video clip unless the existing architecture explicitly supports such behaviour.
+
+## Filter Timing
+
+Example:
+- Video duration: 30 seconds.
+- Cinematic filter: 0–5 seconds.
+- Vintage filter: 10–15 seconds.
+- The remaining sections retain their original appearance unless another effect is active.
+
+Apply a filter only while the playhead is within that filter clip's active time range.
+
+When the playhead exits the range, restore the original appearance unless another active effect applies.
+
+Support multiple non-overlapping filters. Define predictable behaviour for overlapping filters, allowing compatible effects to combine or providing a clear conflict rule.
+
+Never permanently modify the original source video when applying a filter.
+
+## Interaction with Other Editing Operations
+
+Handle filter clips correctly when the associated video is:
+- Split
+- Trimmed
+- Moved
+- Duplicated
+- Deleted
+- Repositioned through timeline operations
+
+Keep filter timing and target associations valid after these changes.
+
+## Exact Preview and Export Timing
+
+- Activate and deactivate effects at the correct frame.
+- Use the same filter settings and timing in preview and export.
+- Do not apply timeline filters globally during export.
+- Preserve original audio, FPS, resolution, and aspect ratio unless the user changes export settings.
+
+---
+
+# 5. Transitions — Real Timeline-Based Transitions
+
+Implement actual transitions between adjacent video clips.
+
+Include:
+- Fade
+- Cross Dissolve
+- Slide
+- Wipe
+- Zoom
+
+Requirements:
+- Transitions must attach to valid edit points between adjacent video clips.
+- They must not behave like ordinary full-video filters.
+- Show transition clips clearly at their respective edit points.
+- Use a sensible default duration of approximately 1 second.
+- Allow users to adjust duration.
+- Provide direction or style controls where appropriate.
+- Validate clip boundaries and handle clips that are too short.
+- Ensure preview playback and export use the same transition timing and appearance.
+
+## Dynamic Transitions Track
+
+- Hide the Transitions track when no transitions exist.
+- Create it automatically when the first transition is added.
+- Keep it visible while transitions exist.
+- Hide it after the last transition is removed.
+- Restore transition data when reopening a project.
+
+Do not create an empty Transitions track by default.
+
+---
+
+# 6. Add Media — Import and Upload System
+
+Add a clearly visible **+ Add Media / Import Files** button in the editor, preferably above the timeline or inside the Media Library panel.
+
+When clicked, open the system file picker and support importing:
+- Video clips
+- Audio files
+- Music
+- Sound effects
+- Voiceovers
+- Images
+- Logos
+- Other supported visual assets
+
+Also support drag-and-drop importing into the Media Library.
+
+## Media Library
+
+Create a Media Library / Project Assets panel showing:
+- Thumbnails or previews
+- Filenames
+- Media types
+- Video/audio durations where available
+- Search
+- Media-type filters
+- Add to Timeline action
+- Remove from Project action
+
+Removing media that is already used on the timeline should display a warning and explain the consequences.
+
+Do not silently delete timeline edits or original files.
+
+## Importing into an Existing Project
+
+When a project is already open:
+- Import files into the current project's Media Library.
+- Do not create a new project automatically.
+- Do not reset the current timeline.
+- Do not remove or replace existing clips.
+
+Importing and placing a clip on the timeline must be separate actions.
+
+---
+
+# 7. Correct Video and Audio Track Placement
+
+Implement clear track placement rules.
+
+## Main Video Track — V1
+
+- Keep the main footage on V1.
+- When the user adds a short video clip, insert it at the current playhead position on V1 by default.
+- Never silently replace existing footage.
+- If insertion affects existing clips, offer a clear insert/ripple option or ask the user whether to insert, use another track, or cancel.
+- Preserve existing edits.
+
+## Additional Video Tracks — V2, V3, etc.
+
+Allow additional video tracks for:
+- B-roll
+- Overlays
+- Picture-in-picture
+- Secondary footage
+- Layered video
+
+Dragging a clip above V1 should place it on an appropriate additional track.
+
+Create additional tracks only when needed.
+
+## Audio Tracks — A1, A2, etc.
+
+- Imported music, sound effects, and voiceovers should be placed on audio tracks.
+- Use A1 by default when appropriate.
+- If the track is occupied or overlapping audio is needed, create or use another audio track.
+- Never overwrite existing audio automatically.
+- Support audio trimming, splitting, moving, volume, mute, and fade-in/fade-out where supported.
+- Synchronize audio playback and export with the timeline.
+
+## Images and Overlays
+
+- Place images, logos, and supported visual assets on an overlay-capable video track.
+- Allow users to adjust duration, position, scale, and placement where supported.
+- Preserve transparency when supported.
+- Keep the main video visible beneath transparent overlays.
+
+## Add to Timeline Behaviour
+
+When a user selects a file in the Media Library and clicks Add to Timeline:
+- Use the selected track and playhead when appropriate.
+- Otherwise choose a sensible default based on media type.
+- Ask for placement when the destination is ambiguous.
+- Avoid accidental overwriting.
+- If placement conflicts with existing content, use a suitable additional track or ask the user what to do.
+
+---
+
+# 8. Timeline Editing and Playback
+
+Audit and complete the core timeline editing workflow.
+
+Required functionality:
+- Split clips at the playhead
+- Trim clip edges
+- Move and rearrange clips
+- Delete clips
+- Duplicate clips
+- Insert clips without accidental overwriting
+- Multiple video and audio tracks
+- Timeline zoom and scrolling
+- Snap clips to useful positions where appropriate
+- Clear playhead and time ruler
+- Play, pause, seek, and synchronized preview
+- Undo and redo
+- Sensible keyboard shortcuts
+- Accurate clip positions and durations
+- Selection and multi-track handling where supported
+
+The preview must update correctly when the user edits the timeline.
+
+Do not add controls that appear functional but do nothing.
+
+---
+
+# 9. Canvas Aspect Ratios and Correct Portrait Reframing
+
+Fix and implement actual project canvas aspect ratio controls.
+
+Provide these presets:
+
+- Landscape 16:9 — 1920 × 1080
+- YouTube Shorts / TikTok / Reels 9:16 — 1080 × 1920
+- Instagram Portrait 4:5 — 1080 × 1350
+- Square 1:1 — 1080 × 1080
+- Custom dimensions if supported by the rendering engine
+
+Landscape 16:9 should be the default.
+
+## Aspect Ratio Is Not Preview Zoom
+
+Keep Fit, Fit Canvas, and 100% as separate preview zoom controls.
+
+Changing preview zoom must not change the project's actual aspect ratio or export dimensions.
+
+## Fit, Fill, and Crop
+
+Implement three distinct modes:
+
+**Fit**
+- Show the entire source video inside the canvas.
+- Preserve the original proportions.
+- Allow empty space around the video if necessary.
+
+**Fill**
+- Fill the selected canvas.
+- Preserve the source video's proportions.
+- Crop excess edges as necessary.
+- Never stretch the video to fit.
+
+**Crop**
+- Allow the user to control which area remains visible.
+
+Also provide Reset Transform to restore default scale and position.
+
+## Automatic Portrait Reframing
+
+When changing a landscape video to 9:16 or 4:5:
+- Recalculate the video's scale and position for the new canvas.
+- Use sensible center-crop framing by default in Fill mode.
+- Do not shrink the landscape video into a small rectangle in the middle of a portrait canvas unless Fit mode is selected.
+- Avoid excessive zooming.
+- Keep the important central content visible as a sensible default.
+- If subject tracking is not supported, use center cropping and allow manual adjustment.
+
+## Manual Transform Controls
+
+When a video clip is selected, provide:
+- Scale / Zoom
+- Horizontal position (X)
+- Vertical position (Y)
+- Rotation
+- Fit / Fill / Crop
+- Reset Transform
+
+Allow dragging the video inside the preview to reposition it.
+
+Each video clip must have independent transform settings.
+
+Changing the canvas ratio must not delete timeline edits or unintentionally overwrite the transforms of every clip.
+
+Save transform settings with the project.
+
+## Preview and Export Must Match
+
+Use the same calculations for scale, crop, position, and rotation in preview and export.
+
+For example, when 9:16 at 1080 × 1920 is selected, the actual exported video must have dimensions 1080 × 1920.
+
+Verify the actual output file dimensions and framing. A portrait-looking preview alone is not sufficient.
+
+---
+
+# 10. Projects, Folders, and Landing Screen
+
+Fix the existing Projects on This Device interface and implement reliable project management.
+
+## Project Folder Limits
+
+- Allow a maximum of 10 user-created project folders.
+- Each folder can contain any number of projects, subject to actual storage limits.
+- The 10-folder limit applies to folders, not projects.
+- Allow creating, renaming, opening, and deleting folders with suitable confirmations.
+- Prevent creating an 11th user-created folder and explain the limit.
+- Never silently delete a project's data.
+
+## Landing Screen
+
+The landing screen should allow users to:
+- Create a new project.
+- Browse existing folders.
+- See projects inside folders.
+- Open an existing project and continue editing.
+- Import or drop a first clip to begin a new project.
+
+Do not make the landing screen usable only for creating new projects. Existing projects must be easy to find and reopen.
+
+If the user opens an existing project and imports more clips, those clips must belong to the currently open project.
+
+## New Project Workflow
+
+Provide a New Project dialog with:
+- Project name
+- Optional folder selection
+- Create new folder option
+- Existing folder selection
+
+Allow creating a new folder only when fewer than 10 user-created folders exist.
+
+Do not create duplicate projects when importing more media.
+
+## Autosave and Recovery
+
+- Autosave changes where practical.
+- Display save status and errors.
+- Preserve timeline tracks, clip positions, effects, filters, transitions, titles, aspect ratio, transforms, media references, and export history.
+- Restore the last saved project correctly.
+- Avoid data loss when the browser tab closes unexpectedly.
+
+---
+
+# 11. Export Workflow and Export Folders
+
+Improve the export dialog.
+
+Allow users to:
+- Select supported export format and quality.
+- Choose export resolution and FPS where supported.
+- Export using the selected project aspect ratio.
+- Choose an existing project folder as the export destination.
+- Create a new folder if fewer than 10 user-created folders exist.
+- Use the current project's folder as the default destination.
+- See the filename and destination before exporting.
+- Avoid accidentally overwriting existing exports.
+
+If the user chooses a different export destination:
+- Save the exported video in the selected destination.
+- Do not move the source project.
+- Keep a reference to the exported video in the original project's export history.
+- Do not silently overwrite another export.
+
+Clearly separate project data, imported media, and exported videos.
+
+## Browser Storage and File Permissions
+
+Do not pretend that a browser application can freely create and manage real folders on the user's computer.
+
+When running in a browser:
+- Use the File System Access API when supported and explicitly permitted by the user.
+- Otherwise use appropriate browser-based storage and standard downloads.
+- Explain when a video is downloaded rather than saved into a real folder.
+- Ask the user to relink files when permissions or file references are lost.
+- Never claim a real folder was created unless the operation actually succeeded.
+- Handle storage limits and save failures clearly.
+
+---
+
+# 12. Saving, Media References, and Project Recovery
+
+- Store project metadata separately from exported video files.
+- Preserve media references and restore them where permissions allow.
+- Preserve filter clips, transitions, titles, tracks, clip transforms, durations, and timing.
+- Do not silently delete project data or imported files.
+- Warn when a referenced media file becomes unavailable.
+- Provide a relink option.
+- Do not claim browser storage is a complete standalone project folder unless it actually is.
+- Ensure autosave does not duplicate filter or transition clips.
+
+---
+
+# 13. Performance and Resource Management
+
+Optimize Cutline for a laptop with an Intel Core i3 processor, integrated graphics, and 8 GB RAM.
+
+- Avoid unnecessary full-resolution processing during playback.
+- Use lower-resolution previews or proxies where appropriate.
+- Avoid loading every large video into RAM simultaneously.
+- Clean up media resources when no longer needed.
+- Keep timeline interactions responsive.
+- Avoid re-rendering the entire editor when only one clip changes.
+- Handle large files gracefully.
+- Display understandable errors for unsupported formats or export capabilities.
+- Do not claim GPU acceleration unless it is actually supported and implemented.
+
+---
+
+# 14. Required Testing and Verification
+
+After implementation, run the available tests, type checks, and build checks.
+
+Verify the following actual workflows:
+
+### Filters and Effects
+1. A new project does not show an empty Effects/Filters track.
+2. Applying a filter creates a 5-second clip at the playhead.
+3. The filter affects only its assigned time range.
+4. Dragging either edge changes its start time or duration correctly.
+5. Moving, duplicating, deleting, and adjusting a filter clip works.
+6. Multiple filter clips work at different times.
+7. Overlapping filters follow the defined behaviour.
+8. Splitting, trimming, moving, or deleting video clips does not leave broken effect references.
+9. Removing the last filter hides the empty track.
+10. Preview and export agree on filter timing.
+
+### Transitions
+11. Adding a transition creates the Transitions track only when needed.
+12. Transitions attach to valid edit points.
+13. Duration and style changes work.
+14. Removing the last transition hides the empty track.
+15. Preview and export match.
+
+### Media and Timeline
+16. Importing another video does not silently replace existing footage.
+17. Music and sound effects appear on audio tracks.
+18. Images can be added as overlays.
+19. Additional video and audio tracks are created when necessary.
+20. Media Library imports do not accidentally create new projects.
+21. Timeline editing, playback, undo, and redo work.
+
+### Aspect Ratios
+22. A landscape source can be reframed into 9:16 correctly.
+23. Fit preserves the entire source without distortion.
+24. Fill uses proper cropping and preserves proportions.
+25. Instagram Portrait 4:5 and Square 1:1 render correctly.
+26. Manual scale and position controls work.
+27. Exported dimensions and framing match the preview.
+
+### Projects and Export
+28. The folder limit is enforced without limiting project count.
+29. Existing projects can be reopened from the landing screen.
+30. Autosave and project recovery preserve edits.
+31. Filter, transition, track, transform, and aspect ratio settings survive reopening.
+32. Export destinations respect actual browser permissions.
+33. Existing projects and working features remain functional.
+
+Report which tests actually ran, which passed, which failed, and which features remain incomplete. Do not report a test as passed if it was not executed.
+
+## Final Instruction
+
+Inspect the current Cutline implementation first. Then integrate these changes into the existing architecture, fix related bugs, and preserve the current dark-and-gold UI.
+
+Prioritize correct timeline behaviour, accurate preview/export rendering, reliable project saving, and usable media management over cosmetic changes.
+
+Do not mark placeholder implementations as complete. Do not remove working functionality. Do not claim successful rendering or export without verifying the actual output.

@@ -1,18 +1,19 @@
 import './inspector-panel.css';
 import CutlineSelect from '@/components/CutlineSelect';
 import CutlineColorPicker from '@/components/CutlineColorPicker';
-import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextBackgroundStyle, type TextOverlay } from '@/lib/composition';
+import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, FILTER_PRESETS, type Clip, type ClipEffects, type ClipTransform, type TextBackgroundStyle, type TextOverlay, type TimelineFilterEffect } from '@/lib/composition';
 
-type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
+type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text' | 'filterEffect'> & {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
   text?: Partial<TextOverlay>;
+  filterEffect?: Partial<TimelineFilterEffect>;
 };
 
 export type InspectorPanelProps = {
   clip: Clip | null;
   assetName?: string;
-  assetKind?: 'video' | 'audio' | 'image' | 'text';
+  assetKind?: 'video' | 'audio' | 'image' | 'text' | 'effect';
   sourceDuration?: number;
   disabled?: boolean;
   onChange: (patch: ClipPatch) => void;
@@ -38,6 +39,7 @@ function kindLabel(kind: InspectorPanelProps['assetKind']): string {
     case 'audio': return 'Audio clip';
     case 'image': return 'Still image';
     case 'text': return 'Text overlay';
+    case 'effect': return 'Timeline filter';
     default: return 'Video clip';
   }
 }
@@ -176,6 +178,65 @@ export default function InspectorPanel({
     </label>
   );
 
+  if (clip.filterEffect) {
+    const filterName = FILTER_PRESETS.find((preset) => preset.id === clip.filterEffect?.presetId)?.name || clip.filterEffect.presetId;
+    const effectDuration = Math.max(0.08, clipDuration);
+    return (
+      <aside className="cutline-inspector" aria-label="Filter inspector" data-testid="panel-inspector">
+        <div className="cutline-inspector__heading">
+          <span className="cutline-inspector__eyebrow">FILTER INSPECTOR</span>
+          <span className="cutline-inspector__index">EFFECTS TRACK</span>
+        </div>
+        <div className="cutline-inspector__identity" data-testid={`text-clip-name-${clip.id}`}>
+          <span className="cutline-inspector__type cutline-inspector__type--effect" aria-label="Timeline filter">FX</span>
+          <div className="cutline-inspector__identity-copy">
+            <strong title={filterName}>{filterName}</strong>
+            <span>Timed filter <i aria-hidden="true">·</i> {clip.id.slice(0, 8)}</span>
+          </div>
+        </div>
+        <section className="cutline-inspector__section" aria-labelledby="inspector-filter-timing-heading">
+          <div className="cutline-inspector__section-title">
+            <h2 id="inspector-filter-timing-heading">Timing</h2>
+            <span className="cutline-inspector__duration" data-testid="text-clip-duration">
+              <span className="cutline-inspector__duration-dot" aria-hidden="true" />
+              {formatTime(effectDuration)}
+            </span>
+          </div>
+          <div className="cutline-inspector__fields cutline-inspector__fields--single">
+            <label className="cutline-inspector__field" htmlFor={`input-filter-position-${clip.id}`}>
+              <span className="cutline-inspector__field-label">Timeline position</span>
+              <span className="cutline-inspector__input-wrap">
+                <input id={`input-filter-position-${clip.id}`} type="number" min="0" max="86400" step=".01" value={clip.timelineStart} disabled={disabled} onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChange({ timelineStart: clamp(value, 0, 86400) });
+                }} aria-label="Timeline position" data-testid="input-timeline-position" />
+                <span className="cutline-inspector__unit">sec</span>
+              </span>
+            </label>
+            <label className="cutline-inspector__field" htmlFor={`input-filter-duration-${clip.id}`}>
+              <span className="cutline-inspector__field-label">Effect duration</span>
+              <span className="cutline-inspector__input-wrap">
+                <input id={`input-filter-duration-${clip.id}`} type="number" min=".08" max="86400" step=".01" value={effectDuration} disabled={disabled} onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChange({ sourceIn: 0, sourceOut: clamp(value, .08, 86400), speed: 1 });
+                }} aria-label="Effect duration" data-testid="input-filter-duration" />
+                <span className="cutline-inspector__unit">sec</span>
+              </span>
+            </label>
+          </div>
+          {rangeControl('Strength', 'slider-filter-effect-intensity', clip.filterEffect.intensity, 0, 100, 1,
+            (intensity) => onChange({ filterEffect: { intensity } }), '%')}
+        </section>
+        <footer className="cutline-inspector__footer">
+          <span>Only affects the linked video clip during this timeline range.</span>
+          <button type="button" className="cutline-inspector__remove" onClick={onRemove} disabled={disabled} data-testid="button-remove-filter-clip">
+            Remove filter clip <span aria-hidden="true">×</span>
+          </button>
+        </footer>
+      </aside>
+    );
+  }
+
   return (
     <aside className="cutline-inspector" aria-label="Clip inspector" data-testid="panel-inspector">
       <div className="cutline-inspector__heading">
@@ -185,7 +246,7 @@ export default function InspectorPanel({
 
       <div className="cutline-inspector__identity" data-testid={`text-clip-name-${clip.id}`}>
         <span className={`cutline-inspector__type cutline-inspector__type--${assetKind}`} aria-label={kindLabel(assetKind)}>
-          {assetKind === 'audio' ? 'AUD' : assetKind === 'image' ? 'IMG' : assetKind === 'text' ? 'TXT' : 'VID'}
+          {assetKind === 'audio' ? 'AUD' : assetKind === 'image' ? 'IMG' : assetKind === 'text' ? 'TXT' : assetKind === 'effect' ? 'FX' : 'VID'}
         </span>
         <div className="cutline-inspector__identity-copy">
           <strong title={assetName || 'Untitled clip'}>{assetName || 'Untitled clip'}</strong>

@@ -1,4 +1,4 @@
-export type TrackKind = 'video' | 'audio' | 'text';
+export type TrackKind = 'video' | 'audio' | 'text' | 'effects';
 
 export type Track = {
   id: string;
@@ -40,6 +40,12 @@ export type ClipFilter = {
   presetId: string;
   intensity: number;
   enabled: boolean;
+};
+
+export type TimelineFilterEffect = {
+  presetId: string;
+  intensity: number;
+  targetClipId: string;
 };
 
 export type MarkupTool = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'text';
@@ -115,6 +121,7 @@ export type Clip = {
   fadeIn?: number;
   fadeOut?: number;
   text?: TextOverlay;
+  filterEffect?: TimelineFilterEffect;
 };
 
 export type Project = {
@@ -243,6 +250,9 @@ export const FILTER_PRESETS = [
   { id: 'soft-film-print', name: 'Soft Film Print', description: 'Warm, restrained color with lifted blacks and gentle contrast.', values: { brightness: 1.06, contrast: .9, saturation: .76, temperature: 24, tint: 4, fade: .2, vignette: .05 } },
   { id: 'arctic-silver', name: 'Arctic Silver', description: 'Cool, nearly monochrome tones with clean contrast.', values: { brightness: 1.04, contrast: 1.12, saturation: .18, temperature: -38, tint: -4, fade: .04, vignette: .08 } },
   { id: 'shadow-crush', name: 'Shadow Crush', description: 'Dark, high-contrast color with pronounced edge falloff.', values: { brightness: .78, contrast: 1.48, saturation: 1.16, temperature: -5, tint: 0, fade: 0, vignette: .34 } },
+  { id: 'cool', name: 'Cool', description: 'A restrained blue shift with crisp contrast.', values: { brightness: 1, contrast: 1.1, saturation: 1.02, temperature: -30, tint: -4, fade: 0, vignette: .02 } },
+  { id: 'black-and-white', name: 'Black & White', description: 'Monochrome with balanced midtones and clean contrast.', values: { brightness: 1.02, contrast: 1.12, saturation: 0, temperature: 0, tint: 0, fade: .02, vignette: .04 } },
+  { id: 'vibrant', name: 'Vibrant', description: 'Bright, lively color with a moderate contrast lift.', values: { brightness: 1.06, contrast: 1.12, saturation: 1.42, temperature: 3, tint: 0, fade: 0, vignette: 0 } },
 ] as const;
 
 function clamp01(value: number) {
@@ -333,6 +343,50 @@ function drawColorOverlays(
 
 export function getClipDuration(clip: Clip): number {
   return Math.max(0, (clip.sourceOut - clip.sourceIn) / Math.max(.1, clip.speed));
+}
+
+export function getActiveTimelineFilters(project: Project, targetClipId: string, time: number): TimelineFilterEffect[] {
+  const targetClip = project.clips.find((clip) => clip.id === targetClipId && !clip.filterEffect && !clip.text && !clip.audioOnly);
+  if (!targetClip || time < targetClip.timelineStart || time >= targetClip.timelineStart + getClipDuration(targetClip)) return [];
+  const effectTrackIds = new Set(project.tracks
+    .filter((track) => track.kind === 'effects' && track.visible !== false)
+    .map((track) => track.id));
+  return project.clips
+    .filter((clip) =>
+      Boolean(clip.filterEffect) &&
+      effectTrackIds.has(clip.trackId) &&
+      clip.filterEffect?.targetClipId === targetClipId &&
+      time >= targetClip.timelineStart &&
+      time < targetClip.timelineStart + getClipDuration(targetClip) &&
+      time >= clip.timelineStart &&
+      time < clip.timelineStart + getClipDuration(clip),
+    )
+    .sort((a, b) => a.timelineStart - b.timelineStart || a.id.localeCompare(b.id))
+    .flatMap((clip) => clip.filterEffect ? [clip.filterEffect] : []);
+}
+
+function withTimelineFilterEffects(project: Project, clip: Clip, time: number): Clip {
+  const timelineFilters = getActiveTimelineFilters(project, clip.id, time);
+  if (!timelineFilters.length) return clip;
+  const legacyFilter = clip.effects?.filterPreset
+    ? [{
+        presetId: clip.effects.filterPreset,
+        intensity: clip.effects.filterIntensity ?? 100,
+        enabled: true,
+      }]
+    : [];
+  return {
+    ...clip,
+    effects: {
+      ...DEFAULT_EFFECTS,
+      ...clip.effects,
+      filterPreset: undefined,
+      filterStack: [
+        ...(clip.effects?.filterStack ?? legacyFilter),
+        ...timelineFilters.map(({ presetId, intensity }) => ({ presetId, intensity, enabled: true })),
+      ],
+    },
+  };
 }
 
 export function getClipFade(clip: Clip, time: number): number {
@@ -740,6 +794,7 @@ export function renderProjectFrame(
   const scaleX = context.canvas.width / Math.max(1, project.width);
   const scaleY = context.canvas.height / Math.max(1, project.height);
   const activeVisual = project.clips.filter((clip) => {
+    if (clip.filterEffect) return false;
     if (layer === 'base' && clip.text) return false;
     if (layer === 'overlay' && !clip.text) return false;
     const track = renderIndex
@@ -828,7 +883,7 @@ export function renderProjectFrame(
       const fromSample = Math.min(fromClip.sourceOut, fromClip.sourceIn + Math.max(0, boundary - fromClip.timelineStart) * fromClip.speed);
       const toSample = Math.max(toClip.sourceIn, toClip.sourceIn + Math.max(0, time - boundary) * toClip.speed);
       if (transition.type === 'wipe' || transition.type === 'slide') {
-        drawMedia(context, fromClip, fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, fade: false });
         context.save();
         const revealWidth = project.width * progress;
         if (transition.type === 'wipe') {
@@ -840,18 +895,18 @@ export function renderProjectFrame(
           context.rect(0, 0, project.width, project.height);
           context.clip();
         }
-        drawMedia(context, toClip, toAsset, toSource, time, project, playing, {
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
           sampleTime: toSample,
           fade: false,
           offsetX: transition.type === 'slide' ? project.width * (1 - progress) : 0,
         });
         context.restore();
       } else if (transition.type === 'zoom') {
-        drawMedia(context, fromClip, fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
-        drawMedia(context, toClip, toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, scaleMultiplier: .82 + .18 * progress, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, scaleMultiplier: .82 + .18 * progress, fade: false });
       } else {
-        drawMedia(context, fromClip, fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
-        drawMedia(context, toClip, toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, fade: false });
         if (transition.type === 'fade-through-black') {
           context.save();
           context.globalAlpha = Math.max(0, 1 - Math.abs(progress * 2 - 1));
@@ -876,7 +931,7 @@ export function renderProjectFrame(
       ? renderIndex.assetsById.get(clip.assetId)
       : assets.find((item) => item.id === clip.assetId);
     const source = mediaByAsset.get(clip.assetId);
-    if (asset && source) drawMedia(context, clip, asset, source, time, project, playing);
+    if (asset && source) drawMedia(context, clip.text ? clip : withTimelineFilterEffects(project, clip, time), asset, source, time, project, playing);
   }
 
   if (layer !== 'base') {

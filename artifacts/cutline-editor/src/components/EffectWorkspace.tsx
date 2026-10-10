@@ -9,6 +9,7 @@ type Props = {
   disabled?: boolean;
   disabledReason?: string;
   onEffects: (effects: Partial<ClipEffects>) => void;
+  onFilter: (presetId: string) => void;
   onTransition: (type: TransitionPresetType, duration: number) => void;
   onRemoveTransition: () => void;
   hasSelectedTransition?: boolean;
@@ -46,6 +47,7 @@ export default function EffectWorkspace({
   disabled = false,
   disabledReason,
   onEffects,
+  onFilter,
   onTransition,
   onRemoveTransition,
   hasSelectedTransition = false,
@@ -71,15 +73,7 @@ export default function EffectWorkspace({
       onTransition(transition.type, duration);
     } else if (workspace === 'filters') {
       const filter = preset as typeof FILTERS[number];
-      const legacyStack: ClipFilter[] = selectedEffects?.filterPreset
-        ? [{ presetId: selectedEffects.filterPreset, intensity: selectedEffects.filterIntensity ?? 100, enabled: true }]
-        : [];
-      const stack = selectedEffects?.filterStack ?? legacyStack;
-      if (filter.id === 'original') {
-        onEffects({ filterStack: [], filterPreset: undefined, filterIntensity: 100 });
-      } else if (!stack.some((entry) => entry.presetId === filter.id)) {
-        onEffects({ filterStack: [...stack, { presetId: filter.id, intensity: 100, enabled: true }], filterPreset: undefined });
-      }
+      onFilter(filter.id);
     } else {
       onEffects((preset as typeof EFFECTS[number]).values);
     }
@@ -126,7 +120,7 @@ export default function EffectWorkspace({
             ? 'A transition is applied between the selected adjacent clips. Choose a preset to replace it.'
             : 'Select one of two video clips that touch on the same track to enable transitions.'
           : workspace === 'filters'
-            ? 'Filters change the selected clip in preview and export. Use intensity to blend with the original.'
+            ? 'Choose a preset to add a 5-second filter clip at the playhead. Select it on the Effects track to change its strength and timing.'
             : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
       </p>
       {workspace === 'transitions' && <section className="cutline-transition-controls" aria-label="Transition duration">
@@ -164,7 +158,7 @@ export default function EffectWorkspace({
       </section>}
       {workspace === 'filters' && <>
         <div className="cutline-filter-workspace__active">
-          <span>Active stack</span><strong>{selectedFilterLabel}</strong>
+          <span>Existing clip-wide stack</span><strong>{selectedFilterLabel}</strong>
         </div>
         {activeFilters.map((filter) => {
           const filterName = FILTER_PRESETS.find((preset) => preset.id === filter.presetId)?.name || filter.presetId;
@@ -204,7 +198,7 @@ export default function EffectWorkspace({
               <strong>{preset.name}</strong>
               <small>{preset.description}</small>
             </span>
-            <span className="cutline-effect-card__apply">{workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id) ? 'Added' : 'Apply'}</span>
+            <span className="cutline-effect-card__apply">{workspace === 'filters' ? (preset.name === 'Original' ? 'Clear' : 'Add 5s') : 'Apply'}</span>
           </button>
           );
         })}

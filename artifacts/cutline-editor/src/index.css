@@ -235,6 +235,7 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .clip.selected { outline:2px solid #f4c65e; outline-offset:1px; z-index:2; }
 .clip.video { background:#33747b; }.clip.audio { background:#67558a; }.clip.image { background:#8c6930; }
 .clip.text { background:#84622b; }
+.clip.effect { background:linear-gradient(110deg,#755227,#ba8b3d); border-color:rgba(245,202,111,.55); }
 .transition-region { position:absolute; z-index:1; top:1px; height:12px; display:flex; align-items:center; justify-content:center; padding:0; overflow:hidden; border:1px solid #d4b05b; border-radius:3px; color:#25221b; background:repeating-linear-gradient(135deg,#e6c56b,#e6c56b 4px,#b9994d 4px,#b9994d 8px); cursor:pointer; }
 .transition-region.is-selected { border-color:#fff0a3; box-shadow:0 0 0 1px #f2bf57; }
 .transition-region svg { width:9px; height:9px; min-width:9px; }

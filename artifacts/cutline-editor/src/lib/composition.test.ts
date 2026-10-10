@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getPreviewCanvasSize, renderProjectFrame, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
+import { getActiveTimelineFilters, getPreviewCanvasSize, renderProjectFrame, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -93,4 +93,27 @@ test('default rendering still composites text for full-resolution exports', () =
   renderProjectFrame(context, textProject(), [], new Map(), 1, false);
   assert.ok(calls.some((call) => call.name === 'fillRect'));
   assert.ok(calls.some((call) => call.name === 'fillText'));
+});
+
+test('timeline filters activate only inside both their own range and the linked video range', () => {
+  const project: Project = {
+    id: 'filter-test',
+    name: 'Filter timing',
+    width: 1920,
+    height: 1080,
+    frameRate: 30,
+    tracks: [
+      { id: 'video', name: 'Video 1', kind: 'video', order: 0, muted: false },
+      { id: 'effects', name: 'Effects', kind: 'effects', order: 1, muted: false },
+    ],
+    clips: [
+      { id: 'shot', assetId: 'asset-1', trackId: 'video', timelineStart: 2, sourceIn: 0, sourceOut: 4, volume: 1, speed: 1 },
+      { id: 'filter', trackId: 'effects', timelineStart: 3, sourceIn: 0, sourceOut: 2, volume: 0, speed: 1, filterEffect: { presetId: 'cinematic', intensity: 75, targetClipId: 'shot' } },
+    ],
+  };
+
+  assert.deepEqual(getActiveTimelineFilters(project, 'shot', 2.5), []);
+  assert.deepEqual(getActiveTimelineFilters(project, 'shot', 3.5), [{ presetId: 'cinematic', intensity: 75, targetClipId: 'shot' }]);
+  assert.deepEqual(getActiveTimelineFilters(project, 'shot', 5), []);
+  assert.deepEqual(getActiveTimelineFilters(project, 'other-shot', 3.5), []);
 });

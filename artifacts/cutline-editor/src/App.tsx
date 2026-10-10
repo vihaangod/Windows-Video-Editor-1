@@ -19,9 +19,9 @@ import InspectorPanel from '@/components/InspectorPanel';
 import MarkupWorkspace from '@/components/MarkupWorkspace';
 import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTemplatesPanel';
 import {
-  createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, getAudioFade, getClipDuration,
+  createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, FILTER_PRESETS, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type SavedProject, type TextOverlay, type Track, type TrackKind,
+  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type SavedProject, type TextOverlay, type TimelineFilterEffect, type Track, type TrackKind,
 } from '@/lib/composition';
 import {
   getExportFrameCount,
@@ -104,11 +104,31 @@ type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 type ProjectSaveSnapshot = { project: Project; assets: Asset[] };
 type MarkupToolMode = MarkupTool | 'eraser';
 type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip'; id?: string; x: number; y: number };
-type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
+type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text' | 'filterEffect'> & {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
   text?: Partial<TextOverlay>;
+  filterEffect?: Partial<TimelineFilterEffect>;
 };
+function pruneUnusedEffectsTrack(project: Project): Project {
+  if (project.clips.some((clip) => clip.filterEffect)) return project;
+  const tracks = project.tracks.filter((track) => track.kind !== 'effects');
+  if (tracks.length === project.tracks.length) return project;
+  return { ...project, tracks: tracks.map((track, order) => ({ ...track, order })) };
+}
+function constrainTimelineFilters(project: Project): Project {
+  const clips = project.clips.flatMap((clip) => {
+    if (!clip.filterEffect) return [clip];
+    const target = project.clips.find((item) => item.id === clip.filterEffect?.targetClipId);
+    const targetTrack = target && project.tracks.find((track) => track.id === target.trackId);
+    if (!target || !targetTrack || targetTrack.kind !== 'video' || target.text || target.audioOnly) return [];
+    const start = Math.max(clip.timelineStart, target.timelineStart);
+    const end = Math.min(clip.timelineStart + getClipDuration(clip), target.timelineStart + getClipDuration(target));
+    if (end - start < .08) return [];
+    return [{ ...clip, timelineStart: start, sourceIn: 0, sourceOut: end - start, speed: 1 }];
+  });
+  return pruneUnusedEffectsTrack({ ...project, clips });
+}
 type TextPointerDrag = {
   clipId: string;
   pointerId: number;
@@ -840,7 +860,7 @@ function Home() {
   }, []);
   const commit = useCallback((recipe: (current: Project) => Project) => {
     setProject((current) => {
-      const next = recipe(current);
+      const next = constrainTimelineFilters(recipe(current));
       if (next !== current) {
         history.current = [...history.current.slice(-39), current];
         future.current = [];
@@ -988,7 +1008,7 @@ function Home() {
   const previewBaseProject = useMemo(() => {
     const previous = previewBaseProjectRef.current;
     if (previous?.source === project) return previous.rendered;
-    const videoTracks = project.tracks.filter((track) => track.kind === 'video');
+    const videoTracks = project.tracks.filter((track) => track.kind === 'video' || track.kind === 'effects');
     const videoTrackIds = new Set(videoTracks.map((track) => track.id));
     const videoClips = project.clips.filter((clip) => !clip.text && videoTrackIds.has(clip.trackId));
     const sameReferences = <T,>(left: T[], right: T[]) =>
@@ -1084,7 +1104,7 @@ function Home() {
   const activeVisualClip = activeVisualClips.at(-1) || null;
   const activeVisualAsset = activeVisualClip ? assets.find((asset) => asset.id === activeVisualClip.assetId) : null;
   const selectedAsset = selectedClip ? assets.find((asset) => asset.id === selectedClip.assetId) : null;
-  const selectedAssetKind = selectedClip?.text ? 'text' : selectedAsset ? (selectedClip?.audioOnly || isAudio(selectedAsset)) ? 'audio' : isImage(selectedAsset) ? 'image' : 'video' : undefined;
+  const selectedAssetKind = selectedClip?.filterEffect ? 'effect' : selectedClip?.text ? 'text' : selectedAsset ? (selectedClip?.audioOnly || isAudio(selectedAsset)) ? 'audio' : isImage(selectedAsset) ? 'image' : 'video' : undefined;
   const selectedClipIsVideo = Boolean(
     selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
     selectedAsset && isVideo(selectedAsset),
@@ -1093,13 +1113,20 @@ function Home() {
     selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
     selectedAsset && (isVideo(selectedAsset) || isImage(selectedAsset)),
   );
-  const filterDisabledReason = !selectedClip
-    ? 'Select one video clip to apply a filter.'
-    : selectedClipLocked
-      ? 'Unlock the selected track to apply a filter.'
-      : !selectedClipIsVideo
-        ? 'Filters are available on video clips, not audio or title clips.'
-        : undefined;
+  const activeVideoClip = [...activeVisualClips].reverse().find((clip) => {
+    const track = project.tracks.find((item) => item.id === clip.trackId);
+    const asset = assets.find((item) => item.id === clip.assetId);
+    return track?.kind === 'video' && !clip.text && !clip.audioOnly && asset && isVideo(asset);
+  }) || null;
+  const filterTargetClip = selectedClipIsVideo ? selectedClip : activeVideoClip;
+  const filterTargetTrack = filterTargetClip
+    ? project.tracks.find((track) => track.id === filterTargetClip.trackId)
+    : undefined;
+  const filterDisabledReason = !filterTargetClip
+    ? 'Select a video clip or place the playhead over one to add a filter.'
+    : filterTargetTrack?.locked
+      ? 'Unlock the target video track to add a filter.'
+      : undefined;
   const effectDisabledReason = !selectedClip
     ? 'Select one video or image clip to apply an effect.'
     : selectedClipLocked
@@ -1547,7 +1574,26 @@ function Home() {
     const right: Clip = { ...selectedClip, id: uid(), timelineStart: playhead, sourceIn: cutSource };
     commit((current) => ({
       ...current,
-      clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceOut: cutSource } : clip).concat(right),
+      clips: current.clips.flatMap((clip) => {
+        if (clip.id === selectedClip.id) return [{ ...clip, sourceOut: cutSource }, right];
+        if (clip.filterEffect?.targetClipId !== selectedClip.id) return [clip];
+        const clipEnd = clip.timelineStart + getClipDuration(clip);
+        if (clipEnd <= playhead) return [clip];
+        if (clip.timelineStart >= playhead) {
+          return [{ ...clip, filterEffect: { ...clip.filterEffect, targetClipId: right.id } }];
+        }
+        const filterCutSource = clip.sourceIn + (playhead - clip.timelineStart) * clip.speed;
+        return [
+          { ...clip, sourceOut: filterCutSource },
+          {
+            ...clip,
+            id: uid(),
+            timelineStart: playhead,
+            sourceIn: filterCutSource,
+            filterEffect: { ...clip.filterEffect, targetClipId: right.id },
+          },
+        ];
+      }),
       transitions: (current.transitions || []).map((transition) =>
         transition.fromClipId === selectedClip.id ? { ...transition, fromClipId: right.id } : transition
       ),
@@ -1571,9 +1617,11 @@ function Home() {
   const removeSelected = () => {
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock this track before deleting its clip.', true); return; }
-    commit((current) => ({
+    commit((current) => pruneUnusedEffectsTrack({
       ...current,
-      clips: current.clips.filter((clip) => clip.id !== selectedClip.id),
+      clips: current.clips.filter((clip) =>
+        clip.id !== selectedClip.id && clip.filterEffect?.targetClipId !== selectedClip.id
+      ),
       transitions: (current.transitions || []).filter((transition) =>
         transition.fromClipId !== selectedClip.id && transition.toClipId !== selectedClip.id
       ),
@@ -1587,11 +1635,16 @@ function Home() {
     const removedEnd = selectedClip.timelineStart + getClipDuration(selectedClip);
     const duration = getClipDuration(selectedClip);
     const trackId = selectedClip.trackId;
-    commit((current) => ({
+    const laterClipIds = new Set(project.clips
+      .filter((clip) => clip.trackId === trackId && clip.id !== removedId && clip.timelineStart >= removedEnd - .001)
+      .map((clip) => clip.id));
+    commit((current) => pruneUnusedEffectsTrack({
       ...current,
       clips: current.clips
-        .filter((clip) => clip.id !== removedId)
-        .map((clip) => clip.trackId === trackId && clip.timelineStart >= removedEnd - .001
+        .filter((clip) => clip.id !== removedId && clip.filterEffect?.targetClipId !== removedId)
+        .map((clip) => clip.filterEffect && laterClipIds.has(clip.filterEffect.targetClipId)
+          ? { ...clip, timelineStart: Math.max(0, clip.timelineStart - duration) }
+          : clip.trackId === trackId && clip.timelineStart >= removedEnd - .001
           ? { ...clip, timelineStart: Math.max(0, clip.timelineStart - duration) }
           : clip),
       transitions: (current.transitions || []).filter((transition) =>
@@ -1604,13 +1657,21 @@ function Home() {
   const updateSelectedClip = (patch: ClipPatch) => {
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock this track before changing the clip.', true); return; }
-    const { text: textPatch, ...clipPatch } = patch;
+    const { text: textPatch, filterEffect: filterEffectPatch, ...clipPatch } = patch;
     const asset = assets.find((item) => item.id === selectedClip.assetId);
-    const maxSourceTime = Math.max(asset?.duration || 0, selectedClip.sourceOut, selectedClip.sourceIn + .08 * selectedClip.speed);
+    const maxSourceTime = selectedClip.filterEffect
+      ? 86400
+      : Math.max(asset?.duration || 0, selectedClip.sourceOut, selectedClip.sourceIn + .08 * selectedClip.speed);
     commit((current) => ({
       ...current,
       clips: current.clips.map((clip) => {
-        if (clip.id !== selectedClip.id) return clip;
+        if (clip.id !== selectedClip.id) {
+          if (!selectedClip.filterEffect && patch.timelineStart !== undefined && clip.filterEffect?.targetClipId === selectedClip.id) {
+            const delta = Math.max(0, patch.timelineStart) - selectedClip.timelineStart;
+            return { ...clip, timelineStart: Math.max(0, clip.timelineStart + delta) };
+          }
+          return clip;
+        }
         const speed = Math.min(4, Math.max(.1, patch.speed ?? clip.speed));
         const sourceIn = Math.min(maxSourceTime - .08 * speed, Math.max(0, patch.sourceIn ?? clip.sourceIn));
         const sourceOut = Math.min(maxSourceTime, Math.max(sourceIn + .08 * speed, patch.sourceOut ?? clip.sourceOut));
@@ -1627,6 +1688,13 @@ function Home() {
           opacity: Math.max(0, Math.min(1, clipPatch.opacity ?? clip.opacity ?? 1)),
           fadeIn: Math.max(0, Math.min(getClipDuration(clip) / 2, clipPatch.fadeIn ?? clip.fadeIn ?? 0)),
           fadeOut: Math.max(0, Math.min(getClipDuration(clip) / 2, clipPatch.fadeOut ?? clip.fadeOut ?? 0)),
+          ...(clip.filterEffect ? {
+            filterEffect: {
+              ...clip.filterEffect,
+              ...filterEffectPatch,
+              intensity: Math.max(0, Math.min(100, filterEffectPatch?.intensity ?? clip.filterEffect.intensity)),
+            },
+          } : {}),
           ...(clip.text && textPatch ? { text: { ...clip.text, ...textPatch } } : {}),
         };
       }),
@@ -1664,13 +1732,13 @@ function Home() {
       updated = { ...initial, timelineStart: nextStart, sourceIn: Math.max(0, Math.min(initial.sourceOut - minSourceLength, initial.sourceIn + sourceDelta)) };
     } else {
       const asset = assets.find((item) => item.id === initial.assetId);
-      const maxSourceTime = Math.max(initial.sourceOut, asset?.duration || 0);
+      const maxSourceTime = initial.filterEffect ? 86400 : Math.max(initial.sourceOut, asset?.duration || 0);
       const rawEnd = initial.timelineStart + getClipDuration(initial) + deltaSeconds;
       const snappedEnd = snapTimelineTime(rawEnd, initial.id);
       const sourceOut = Math.max(initial.sourceIn + minSourceLength, Math.min(maxSourceTime, initial.sourceIn + Math.max(.08, snappedEnd - initial.timelineStart) * initial.speed));
       updated = { ...initial, sourceOut };
     }
-    setProject((current) => ({
+    setProject((current) => constrainTimelineFilters({
       ...current,
       clips: current.clips.map((clip) => clip.id === updated.id ? updated : clip),
     }));
@@ -1693,7 +1761,7 @@ function Home() {
   };
   const addTrack = (kind: TrackKind) => commit((current) => ({
     ...current,
-    tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : 'Text'} ${current.tracks.filter((t) => t.kind === kind).length + 1}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
+    tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'} ${current.tracks.filter((t) => t.kind === kind).length + 1}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
   }));
   const moveClip = (clipId: string, nextStart: number, targetTrackId?: string) => {
     const movingClip = projectRef.current.clips.find((clip) => clip.id === clipId);
@@ -1701,7 +1769,7 @@ function Home() {
     const asset = movingClip ? assets.find((item) => item.id === movingClip.assetId) : undefined;
     if (!movingClip || (targetTrackId && !targetTrack)) return;
     const sourceTrack = projectRef.current.tracks.find((track) => track.id === movingClip.trackId);
-    const clipKind: TrackKind = movingClip.text ? 'text' : movingClip.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
+    const clipKind: TrackKind = movingClip.filterEffect ? 'effects' : movingClip.text ? 'text' : movingClip.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
     if (sourceTrack?.locked || targetTrack?.locked) {
       notify('Unlock the track before moving clips.', true);
       return;
@@ -1710,12 +1778,17 @@ function Home() {
       notify(`This ${clipKind} clip must stay on a matching track.`, true);
       return;
     }
+    const snappedStart = snapTimelineTime(Math.max(0, nextStart), clipId);
+    const moveDelta = snappedStart - movingClip.timelineStart;
     commit((current) => ({
       ...current,
       clips: current.clips.map((clip) => clip.id === clipId ? {
         ...clip,
-        timelineStart: snapTimelineTime(Math.max(0, nextStart), clipId),
+        timelineStart: snappedStart,
         ...(targetTrackId ? { trackId: targetTrackId } : {}),
+      } : clip.filterEffect?.targetClipId === clipId ? {
+        ...clip,
+        timelineStart: Math.max(0, clip.timelineStart + moveDelta),
       } : clip),
     }));
   };
@@ -1730,7 +1803,15 @@ function Home() {
       ...(selectedClip.effects ? { effects: { ...selectedClip.effects } } : {}),
       ...(selectedClip.text ? { text: { ...selectedClip.text } } : {}),
     };
-    commit((current) => ({ ...current, clips: [...current.clips, duplicate] }));
+    const duplicatedFilters = selectedClip.filterEffect ? [] : project.clips
+      .filter((clip) => clip.filterEffect?.targetClipId === selectedClip.id)
+      .map((clip) => ({
+        ...clip,
+        id: uid(),
+        timelineStart: clip.timelineStart + getClipDuration(selectedClip),
+        filterEffect: { ...clip.filterEffect!, targetClipId: duplicate.id },
+      }));
+    commit((current) => ({ ...current, clips: [...current.clips, duplicate, ...duplicatedFilters] }));
     setSelectedClipId(duplicate.id);
     setPlayhead(duplicate.timelineStart);
   };
@@ -1748,10 +1829,10 @@ function Home() {
     const source = clipboardClip.current;
     if (!source) return;
     const asset = assets.find((item) => item.id === source.assetId);
-    const kind: TrackKind = source.text ? 'text' : source.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
+    const kind: TrackKind = source.filterEffect ? 'effects' : source.text ? 'text' : source.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
     let track = projectRef.current.tracks.find((item) => item.kind === kind && !item.locked);
     if (!track) {
-      track = { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : 'Text'} ${projectRef.current.tracks.filter((item) => item.kind === kind).length + 1}`, order: projectRef.current.tracks.length, muted: false, visible: true, locked: false };
+      track = { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'} ${projectRef.current.tracks.filter((item) => item.kind === kind).length + 1}`, order: projectRef.current.tracks.length, muted: false, visible: true, locked: false };
     }
     const pasted: Clip = {
       ...source,
@@ -1782,10 +1863,12 @@ function Home() {
     const count = projectRef.current.clips.filter((clip) => clip.trackId === track.id).length;
     const removedClipIds = new Set(projectRef.current.clips.filter((clip) => clip.trackId === track.id).map((clip) => clip.id));
     if (!window.confirm(`Delete ${track.name} and ${count} clip${count === 1 ? '' : 's'} on it? This can be undone.`)) return;
-    commit((current) => ({
+    commit((current) => pruneUnusedEffectsTrack({
       ...current,
       tracks: current.tracks.filter((item) => item.id !== track.id).map((item, order) => ({ ...item, order })),
-      clips: current.clips.filter((clip) => clip.trackId !== track.id),
+      clips: current.clips.filter((clip) =>
+        clip.trackId !== track.id && !(clip.filterEffect && removedClipIds.has(clip.filterEffect.targetClipId))
+      ),
       transitions: (current.transitions || []).filter((transition) =>
         !removedClipIds.has(transition.fromClipId) && !removedClipIds.has(transition.toClipId)
       ),
@@ -1803,16 +1886,56 @@ function Home() {
       },
     });
   };
-  const applySelectedFilter = (effects: Partial<ClipEffects>) => {
-    if (!selectedClip) { notify('Select one video clip to apply a filter.', true); return; }
-    if (selectedClipLocked) { notify('Unlock the selected track to apply a filter.', true); return; }
-    if (!selectedClipIsVideo) { notify('Filters are available on video clips.', true); return; }
-    updateSelectedClip({
-      effects: {
-        ...effects,
-        enabled: { brightness: true, contrast: true, saturation: true, blur: true, ...effects.enabled },
-      },
-    });
+  const applySelectedFilter = (presetId: string) => {
+    const target = selectedClipIsVideo ? selectedClip : activeVideoClip;
+    if (!target) { notify(filterDisabledReason || 'Select a video clip or place the playhead over one to add a filter.', true); return; }
+    const targetTrack = project.tracks.find((track) => track.id === target.trackId);
+    if (targetTrack?.locked) { notify('Unlock the target video track to add a filter.', true); return; }
+    const preset = FILTER_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (presetId === 'original') {
+      commit((current) => ({
+        ...current,
+        clips: current.clips.map((clip) => clip.id === target.id
+          ? { ...clip, effects: { ...DEFAULT_EFFECTS, ...clip.effects, filterStack: [], filterPreset: undefined, filterIntensity: 100 } }
+          : clip),
+      }));
+      notify('Clip-wide filters cleared from the target video clip.');
+      return;
+    }
+    const targetEnd = target.timelineStart + getClipDuration(target);
+    const start = Math.max(playhead, target.timelineStart);
+    if (start >= targetEnd) { notify('Move the playhead into the target clip before adding a filter.', true); return; }
+    const duration = Math.min(5, targetEnd - start);
+    const track = project.tracks.find((item) => item.kind === 'effects') || {
+      id: uid(),
+      name: 'Effects',
+      kind: 'effects' as const,
+      order: project.tracks.length,
+      muted: false,
+      visible: true,
+      locked: false,
+    };
+    const filterClip: Clip = {
+      id: uid(),
+      trackId: track.id,
+      timelineStart: start,
+      sourceIn: 0,
+      sourceOut: duration,
+      volume: 0,
+      speed: 1,
+      displayName: preset.name,
+      filterEffect: { presetId, intensity: 100, targetClipId: target.id },
+    };
+    commit((current) => ({
+      ...current,
+      tracks: current.tracks.some((item) => item.id === track.id) ? current.tracks : [...current.tracks, track],
+      clips: [...current.clips, filterClip],
+    }));
+    setSelectedClipId(filterClip.id);
+    setSelectedAssetId(null);
+    setPlayhead(start);
+    notify(`${preset.name} added to the Effects track for ${duration.toFixed(2)} seconds.`);
   };
   const applySelectedTransition = (type: ClipTransition['type'], requestedDuration: number) => {
     if (!canApplySelectedTransition || !selectedClipTransitionPair) {
@@ -3208,7 +3331,8 @@ function Home() {
               workspace={libraryWorkspace}
               disabled={Boolean(effectWorkspaceDisabledReason)}
               disabledReason={effectWorkspaceDisabledReason}
-              onEffects={libraryWorkspace === 'filters' ? applySelectedFilter : applySelectedEffect}
+              onEffects={applySelectedEffect}
+              onFilter={applySelectedFilter}
               onTransition={applySelectedTransition}
               onRemoveTransition={removeSelectedTransition}
               hasSelectedTransition={selectedClipHasTransition && !selectedClipLocked}
@@ -3395,7 +3519,7 @@ function Home() {
           <button className="btn flat" title="Trim selected clip end to playhead" disabled={!selectedClip || selectedClipLocked} onClick={() => trimAtPlayhead('end')} data-testid="button-trim-end"><Minus size={13} />Out</button>
           <button className="icon-btn" title="Delete selected clip" disabled={!selectedClip || selectedClipLocked} onClick={removeSelected} data-testid="button-timeline-delete"><Trash2 size={14} /></button>
           <span className="minor">{selectedClip ? `Selected · ${formatTime((selectedClip.sourceOut - selectedClip.sourceIn) / selectedClip.speed)}` : `${project.clips.length} clips`}</span>
-          {selectedClip && <label className="clip-volume">Clip gain
+          {selectedClip && !selectedClip.filterEffect && <label className="clip-volume">Clip gain
             <input aria-label="Selected clip volume" type="range" min="0" max="2" step=".01" value={selectedClip.volume} disabled={selectedClipLocked} onChange={(event) => updateSelectedClip({ volume: Number(event.target.value) })} data-testid="input-clip-volume" />
           </label>}
           {selectedClip?.assetId && <button className={`icon-btn ${selectedClip.muted ? 'active' : ''}`} title={selectedClip.muted ? 'Unmute selected clip audio' : 'Mute selected clip audio'} aria-label={selectedClip.muted ? 'Unmute selected clip audio' : 'Mute selected clip audio'} aria-pressed={Boolean(selectedClip.muted)} disabled={selectedClipLocked} onClick={() => updateSelectedClip({ muted: !selectedClip.muted })} data-testid="button-mute-selected-clip">{selectedClip.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}</button>}
@@ -3412,10 +3536,10 @@ function Home() {
             {orderedTracks.map((track) => (
               <div className="track-row" key={track.id}>
                 <div className="track-meta">
-                  {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : <Type size={13} color="#e6b84f" />}
+                   {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : track.kind === 'effects' ? <WandSparkles size={13} color="#e9ad4e" /> : <Type size={13} color="#e6b84f" />}
                   <span className="track-name">{track.name}</span>
                   {track.kind !== 'audio' && <button className={`icon-btn ${track.visible === false ? 'active' : ''}`} title={track.visible === false ? 'Show track' : 'Hide track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, visible: t.visible === false } : t) }))} data-testid={`button-visibility-track-${track.id}`}>{track.visible === false ? <EyeOff size={12} /> : <Eye size={12} />}</button>}
-                  {track.kind !== 'text' && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
+                   {(track.kind === 'audio' || track.kind === 'video') && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
                   <button className={`icon-btn ${track.locked ? 'active' : ''}`} title={track.locked ? 'Unlock track' : 'Lock track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, locked: !t.locked } : t) }))} data-testid={`button-lock-track-${track.id}`}>{track.locked ? <LockKeyhole size={11} /> : <UnlockKeyhole size={11} />}</button>
                   <button className="icon-btn track-order-control" title="Move track up" aria-label={`Move ${track.name} up`} disabled={track.order === 0} onClick={() => reorderTrack(track.id, -1)} data-testid={`button-track-up-${track.id}`}><ArrowUp size={11} /></button>
                   <button className="icon-btn track-order-control" title="Move track down" aria-label={`Move ${track.name} down`} disabled={track.order === orderedTracks.length - 1} onClick={() => reorderTrack(track.id, 1)} data-testid={`button-track-down-${track.id}`}><ArrowDown size={11} /></button>
@@ -3437,36 +3561,12 @@ function Home() {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setPlayhead(snapTimelineTime(Math.max(0, (event.clientX - rect.left) / scale)));
                 }} data-testid={`lane-track-${track.id}`}>
-                  {(project.transitions || []).filter((transition) => {
-                    const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
-                    return fromClip?.trackId === track.id;
-                  }).map((transition) => {
-                    const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
-                    const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
-                    if (!fromClip || !toClip) return null;
-                    const boundary = fromClip.timelineStart + getClipDuration(fromClip);
-                    return <button
-                      key={transition.id}
-                      type="button"
-                      className={`transition-region${selectedClipId === fromClip.id || selectedClipId === toClip.id ? ' is-selected' : ''}`}
-                      style={{ left: Math.max(0, (boundary - transition.duration / 2) * scale), width: Math.max(9, transition.duration * scale) }}
-                      title={`${transition.type.replaceAll('-', ' ')} · ${transition.duration.toFixed(1)} seconds`}
-                      aria-label={`${transition.type.replaceAll('-', ' ')} transition, ${transition.duration.toFixed(1)} seconds`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedClipId(fromClip.id);
-                        setSelectedAssetId(fromClip.assetId || null);
-                        setLibraryWorkspace('transitions');
-                      }}
-                      data-testid={`transition-region-${transition.id}`}
-                    ><Sparkles size={10} /></button>;
-                  })}
                   {project.clips.filter((clip) => clip.trackId === track.id).map((clip) => {
                     const asset = assets.find((item) => item.id === clip.assetId);
-                    if (!asset && !clip.text) return null;
+                     if (!asset && !clip.text && !clip.filterEffect) return null;
                     const duration = getClipDuration(clip);
-                    const clipKindClass = clip.text ? 'text' : project.tracks.find((item) => item.id === clip.trackId)?.kind === 'audio' || clip.audioOnly || (asset && isAudio(asset)) ? 'audio' : asset && isImage(asset) ? 'image' : 'video';
-                    const clipLabel = clip.displayName || clip.text?.templateName || asset?.name || 'Text clip';
+                     const clipKindClass = clip.filterEffect ? 'effect' : clip.text ? 'text' : project.tracks.find((item) => item.id === clip.trackId)?.kind === 'audio' || clip.audioOnly || (asset && isAudio(asset)) ? 'audio' : asset && isImage(asset) ? 'image' : 'video';
+                     const clipLabel = clip.displayName || clip.filterEffect && FILTER_PRESETS.find((item) => item.id === clip.filterEffect?.presetId)?.name || clip.text?.templateName || asset?.name || 'Text clip';
                     return <div key={clip.id} draggable={!track.locked} className={`clip ${clipKindClass} ${selectedClipId === clip.id ? 'selected' : ''}`}
                       style={{ left: clip.timelineStart * scale, width: Math.max(8, duration * scale), opacity: track.muted ? .5 : 1 }}
                       tabIndex={0}
@@ -3536,6 +3636,41 @@ function Home() {
                 </div>
               </div>
             ))}
+            {Boolean(project.transitions?.length) && <div className="track-row track-row--transitions" data-testid="track-transitions">
+              <div className="track-meta">
+                <Sparkles size={13} color="#e6c56b" />
+                <span className="track-name">Transitions</span>
+                <span className="track-row__count">{project.transitions?.length}</span>
+              </div>
+              <div className="track-lane" style={{ backgroundSize: `${timelineRuler.interval * scale}px 100%` }} onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setPlayhead(snapTimelineTime(Math.max(0, (event.clientX - rect.left) / scale)));
+              }} data-testid="lane-transitions">
+                {(project.transitions || []).map((transition) => {
+                  const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
+                  const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
+                  if (!fromClip || !toClip) return null;
+                  const boundary = fromClip.timelineStart + getClipDuration(fromClip);
+                  return <button
+                    key={transition.id}
+                    type="button"
+                    className={`transition-region${selectedClipId === fromClip.id || selectedClipId === toClip.id ? ' is-selected' : ''}`}
+                    style={{ left: Math.max(0, (boundary - transition.duration / 2) * scale), width: Math.max(9, transition.duration * scale) }}
+                    title={`${transition.type.replaceAll('-', ' ')} · ${transition.duration.toFixed(1)} seconds`}
+                    aria-label={`${transition.type.replaceAll('-', ' ')} transition, ${transition.duration.toFixed(1)} seconds`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setSelectedClipId(fromClip.id);
+                      setSelectedAssetId(fromClip.assetId || null);
+                      setPlayhead(boundary);
+                      setLibraryWorkspace('transitions');
+                    }}
+                    data-testid={`transition-region-${transition.id}`}
+                  ><Sparkles size={10} /></button>;
+                })}
+                <div className="playhead" style={{ left: playhead * scale }} />
+              </div>
+            </div>}
             {orderedTracks.length === 0 && <div className="drop-hint">Add a track to get started</div>}
           </div>
         </div>
