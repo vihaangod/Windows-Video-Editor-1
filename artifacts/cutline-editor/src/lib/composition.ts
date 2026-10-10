@@ -67,11 +67,14 @@ export type TextBackgroundStyle = {
   borderWidth?: number;
 };
 
+export type TextAnimation = 'none' | 'typing' | 'word-reveal' | 'pop-in' | 'fade-in' | 'slide-up';
+
 export type TextOverlay = {
   templateId: string;
   templateName: string;
   content: string;
   fontFamily: string;
+  fontStyle?: 'normal' | 'italic';
   fontSize: number;
   fontWeight: number;
   color: string;
@@ -83,6 +86,7 @@ export type TextOverlay = {
   outlineWidth: number;
   shadow: boolean;
   opacity: number;
+  animation?: TextAnimation;
   backgroundStyle?: TextBackgroundStyle;
 };
 
@@ -206,6 +210,12 @@ export const FILTER_PRESETS = [
   { id: 'vintage', name: 'Vintage', description: 'Muted color, lifted blacks, and a warm finish.', values: { brightness: 1.04, contrast: .86, saturation: .72, temperature: 20, tint: 7, fade: .2, vignette: .18 } },
   { id: 'noir', name: 'Noir', description: 'Monochrome with stronger contrast and edge falloff.', values: { brightness: 1.02, contrast: 1.32, saturation: 0, temperature: 0, tint: 0, fade: 0, vignette: .28 } },
   { id: 'fade', name: 'Fade', description: 'Lower contrast and gently lift dark tones.', values: { brightness: 1.06, contrast: .82, saturation: .88, temperature: 0, tint: 0, fade: .28, vignette: 0 } },
+  { id: 'bleach-bypass', name: 'Bleach Bypass', description: 'Hard contrast and restrained color for a gritty film finish.', values: { brightness: .98, contrast: 1.34, saturation: .42, temperature: -4, tint: 2, fade: .06, vignette: .12 } },
+  { id: 'soft-pastel', name: 'Soft Pastel', description: 'Gentle highlights, softer contrast, and light pastel color.', values: { brightness: 1.1, contrast: .87, saturation: .82, temperature: 9, tint: 6, fade: .17, vignette: .02 } },
+  { id: 'golden-hour', name: 'Golden Hour', description: 'Warm, bright highlights with a saturated late-day glow.', values: { brightness: 1.08, contrast: 1.06, saturation: 1.24, temperature: 44, tint: 7, fade: .03, vignette: .04 } },
+  { id: 'sepia-print', name: 'Sepia Print', description: 'Low-color warm brown tones with a subtle printed-film fade.', values: { brightness: 1.03, contrast: .96, saturation: .38, temperature: 38, tint: 9, fade: .13, vignette: .06 } },
+  { id: 'neon-night', name: 'Neon Night', description: 'Deep, cool shadows and vivid color for nighttime scenes.', values: { brightness: .88, contrast: 1.3, saturation: 1.34, temperature: -28, tint: 12, fade: 0, vignette: .26 } },
+  { id: 'crisp-detail', name: 'Crisp Detail', description: 'Clean, high contrast with natural color and minimal tint.', values: { brightness: 1, contrast: 1.3, saturation: 1.02, temperature: 0, tint: 0, fade: 0, vignette: .04 } },
 ] as const;
 
 function clamp01(value: number) {
@@ -303,15 +313,43 @@ function drawText(
   const layout = getTextLayout(context, text, project);
   const transform = { ...DEFAULT_TRANSFORM, ...clip.transform };
   const effects = getRenderedEffects(clip);
+  const elapsed = Math.max(0, time - clip.timelineStart);
+  const animation = text.animation ?? 'none';
+  const animationProgress = clamp01(elapsed / .58);
+  const easedProgress = 1 - (1 - animationProgress) ** 3;
+  let animationOpacity = 1;
+  let animationScale = 1;
+  let animationOffsetY = 0;
+  let revealCharacters: number | null = null;
+  let revealWords: number | null = null;
+  if (animation === 'fade-in') animationOpacity = .08 + .92 * easedProgress;
+  if (animation === 'pop-in') {
+    animationOpacity = .18 + .82 * easedProgress;
+    animationScale = .72 + .28 * easedProgress;
+  }
+  if (animation === 'slide-up') {
+    animationOpacity = .08 + .92 * easedProgress;
+    animationOffsetY = (1 - easedProgress) * 38;
+  }
+  if (animation === 'typing') {
+    const characterCount = Math.max(1, layout.lines.reduce((count, line) => count + Array.from(line).length, 0));
+    const revealDuration = Math.min(2.8, Math.max(.75, characterCount * .045));
+    revealCharacters = Math.max(1, Math.ceil(characterCount * clamp01(elapsed / revealDuration)));
+  }
+  if (animation === 'word-reveal') {
+    const wordCount = Math.max(1, layout.lines.reduce((count, line) => count + (line.match(/\S+/g)?.length ?? 0), 0));
+    const revealDuration = Math.min(3, Math.max(.8, wordCount * .28));
+    revealWords = Math.max(1, Math.ceil(wordCount * clamp01(elapsed / revealDuration)));
+  }
   context.save();
-  context.translate(project.width / 2 + transform.x, project.height / 2 + transform.y);
+  context.translate(project.width / 2 + transform.x, project.height / 2 + transform.y + animationOffsetY);
   context.rotate(transform.rotation * Math.PI / 180);
-  context.scale(transform.scale, transform.scale);
-  context.globalAlpha = Math.max(0, Math.min(1, (clip.opacity ?? 1) * text.opacity * getClipFade(clip, time)));
+  context.scale(transform.scale * animationScale, transform.scale * animationScale);
+  context.globalAlpha = Math.max(0, Math.min(1, (clip.opacity ?? 1) * text.opacity * animationOpacity * getClipFade(clip, time)));
   context.filter = `brightness(${effects.brightness}) contrast(${effects.contrast}) saturate(${effects.saturation}) blur(${effects.blur}px)`;
 
   const { fontSize, lineHeight, lines, x, firstY, background } = layout;
-  context.font = `${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
+  context.font = `${text.fontStyle === 'italic' ? 'italic ' : ''}${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
   if (background && text.backgroundColor) {
     context.save();
     context.globalAlpha *= Math.max(0, Math.min(1, background.opacity));
@@ -325,7 +363,8 @@ function drawText(
     }
     context.restore();
   }
-  context.textAlign = text.align;
+  const isRevealAnimation = revealCharacters !== null || revealWords !== null;
+  context.textAlign = isRevealAnimation ? 'left' : text.align;
   context.textBaseline = 'middle';
   context.lineJoin = 'round';
   if (text.shadow) {
@@ -334,15 +373,37 @@ function drawText(
     context.shadowOffsetX = 0;
     context.shadowOffsetY = fontSize * .08;
   }
+  let charactersRemaining = revealCharacters;
+  let wordsRemaining = revealWords;
   lines.forEach((item, index) => {
     const y = firstY + index * lineHeight;
+    let renderedText = item;
+    let drawX = x;
+    if (charactersRemaining !== null) {
+      const fullLineCharacters = Array.from(item);
+      const visibleCount = Math.min(fullLineCharacters.length, charactersRemaining);
+      charactersRemaining = Math.max(0, charactersRemaining - fullLineCharacters.length);
+      renderedText = fullLineCharacters.slice(0, visibleCount).join('');
+      const fullLineWidth = context.measureText(item).width;
+      drawX = text.align === 'center' ? x - fullLineWidth / 2 : text.align === 'right' ? x - fullLineWidth : x;
+    } else if (wordsRemaining !== null) {
+      const lineWords = Array.from(item.matchAll(/\S+/g));
+      const visibleCount = Math.min(lineWords.length, wordsRemaining);
+      wordsRemaining = Math.max(0, wordsRemaining - lineWords.length);
+      const visibleEnd = visibleCount > 0
+        ? (lineWords[visibleCount - 1].index ?? 0) + lineWords[visibleCount - 1][0].length
+        : 0;
+      renderedText = item.slice(0, visibleEnd);
+      const fullLineWidth = context.measureText(item).width;
+      drawX = text.align === 'center' ? x - fullLineWidth / 2 : text.align === 'right' ? x - fullLineWidth : x;
+    }
     if (text.outlineWidth > 0) {
       context.strokeStyle = text.outlineColor;
       context.lineWidth = text.outlineWidth;
-      context.strokeText(item, x, y, layout.maxWidth);
+      context.strokeText(renderedText, drawX, y, layout.maxWidth);
     }
     context.fillStyle = text.color;
-    context.fillText(item, x, y, layout.maxWidth);
+    context.fillText(renderedText, drawX, y, layout.maxWidth);
   });
   context.restore();
 }
@@ -366,7 +427,7 @@ function getTextLayout(context: CanvasRenderingContext2D, text: TextOverlay, pro
   const lineHeight = fontSize * 1.18;
   const maxWidth = project.width * .84;
   const lines: string[] = [];
-  context.font = `${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
+  context.font = `${text.fontStyle === 'italic' ? 'italic ' : ''}${text.fontWeight} ${fontSize}px ${text.fontFamily}`;
   for (const paragraph of text.content.replace(/\r/g, '').split('\n')) {
     let line = '';
     for (const word of paragraph.split(/\s+/).filter(Boolean)) {

@@ -1,0 +1,121 @@
+# Cutline — Templates, Titles & Texts, Filters & Professional Editing Tools Upgrade
+
+Upgrade the existing Cutline video editor while preserving its current dark-and-gold theme, layout style, and all working features. Before making changes, inspect the existing codebase and identify which features are already implemented, partially implemented, or missing. Do not create duplicate tools.
+
+## 1. Templates — 20 Ready-Made Templates
+
+Create a dedicated Templates section with **20 distinct, ready-made video design templates**.
+
+Requirements:
+
+* Display all 20 templates in an attractive, consistent grid with preview thumbnails, template names, and categories.
+* Include a mix of cinematic titles, YouTube intros, outros, gaming titles, lower thirds, subtitles, social media overlays, subscribe prompts, transitions, and promotional text designs.
+* Each template must have a distinct design and purpose; do not duplicate the same design with different names.
+* Clicking a template should open a preview and allow the user to apply it to the current project.
+* Applied templates must create real, editable timeline elements rather than static preview images.
+* Allow users to customize text, font, size, color, duration, position, animation, and other relevant properties.
+* Templates must work with the existing timeline, preview, and export systems.
+* Use lightweight previews and assets. Do not download copyrighted template packs without permission.
+* If some templates require animation, implement actual animations rather than decorative thumbnails.
+
+## 2. Titles & Texts — Add 10 New Options
+
+Inspect the current Titles & Texts section and add **10 genuinely new, useful text presets or text tools** that do not duplicate existing options.
+
+Suggested additions:
+
+1. Basic title
+2. Subtitle text
+3. Cinematic title
+4. Lower-third name and designation
+5. Animated typing text
+6. Word-by-word reveal
+7. Pop-in text animation
+8. Outline/stroke text
+9. Text with shadow and background box
+10. Gaming-style title
+
+Requirements:
+
+* Each option must work in the actual video preview and timeline.
+* Text elements must be editable after insertion.
+* Support changing font, size, color, alignment, position, opacity, duration, and animation wherever applicable.
+* Keep existing text presets and features intact.
+* Avoid adding options that are just duplicates with different labels.
+
+## 3. Filters — Add 6 New Filters
+
+Inspect the existing Filters section and add **6 distinct filters** that are not already present.
+
+Suggested filters:
+
+1. Cinematic
+2. Vintage
+3. Black & White
+4. Warm
+5. Cool
+6. Film Fade
+
+Requirements:
+
+* Each filter must visibly affect the actual video preview.
+* Provide an intensity/strength slider where practical.
+* Filters must be adjustable and removable.
+* Ensure the selected filters are applied consistently during export.
+* Avoid applying the same filter effect under multiple different names.
+* Keep the existing filters working.
+
+## 4. Professional Editing Tools — Audit and Complete Missing Features
+
+I cannot tell from the current UI alone whether Cutline already has proper cutting and trimming tools. Inspect the implementation and compare it with the essential workflow of professional desktop video editors.
+
+### Essential timeline editing
+
+* Split/cut a clip at the playhead.
+* Trim the beginning or end of a clip.
+* Move, select, and delete clips.
+* Move and arrange clips on the timeline.
+* Support multiple video, audio, and text tracks where the current architecture allows it.
+* Allow users to adjust clip duration and position accurately.
+* Provide undo and redo for editing actions.
+* Support zooming and horizontal scrolling through the timeline.
+* Show a clear playhead and accurate time ruler.
+* Prevent accidental deletion or movement of clips during normal interaction.
+
+### Preview and playback
+
+* Play, pause, and seek through the project.
+* Keep the preview synchronized with the timeline and playhead.
+* Ensure titles, text, filters, and effects appear correctly during playback.
+* Fix any existing preview issues without breaking project settings or export quality.
+
+### Audio editing
+
+* Adjust clip volume.
+* Mute or unmute clips.
+* Trim and split audio clips.
+* Display an audio waveform if supported by the current architecture.
+* Keep audio and video synchronized.
+
+### Professional workflow
+
+* Add keyboard shortcuts for common actions, including Split, Undo, Redo, Delete, Play/Pause, and Save.
+* Add snapping and useful timeline selection controls where appropriate.
+* Make sure project saving and reopening preserve clip positions, durations, effects, text, and track arrangement.
+* Keep export settings and output quality consistent with the existing implementation.
+
+## 5. Implementation and Quality Checks
+
+* First audit the existing code and reuse working components.
+* Implement real functionality, not just buttons or mockups.
+* Do not rebuild the whole application or change unrelated UI.
+* Preserve Cutline's dark-and-gold visual identity.
+* Keep all controls readable, responsive, and consistent with the existing design.
+* Optimize performance for laptops with 8 GB RAM.
+* Do not load all 20 template animations or heavy assets simultaneously.
+* Ensure new features work with existing projects and do not damage saved data.
+* Run type checking, relevant automated tests, and available build checks.
+* Test the actual editing workflows for splitting, trimming, applying templates, adding text, applying filters, saving, reopening, and exporting.
+* Fix any regressions caused by these changes.
+
+At the end, provide a concise report listing what was already implemented, what was added, what was fixed, and what remains incomplete. Never report a feature as working unless it has been verified.
