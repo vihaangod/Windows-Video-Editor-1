@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getActiveTimelineFilters, getPreviewCanvasSize, renderProjectFrame, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
+import { getActiveTimelineFilters, getPreviewCanvasSize, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -116,4 +116,26 @@ test('timeline filters activate only inside both their own range and the linked 
   assert.deepEqual(getActiveTimelineFilters(project, 'shot', 3.5), [{ presetId: 'cinematic', intensity: 75, targetClipId: 'shot' }]);
   assert.deepEqual(getActiveTimelineFilters(project, 'shot', 5), []);
   assert.deepEqual(getActiveTimelineFilters(project, 'other-shot', 3.5), []);
+});
+
+test('saved selections restore by stable IDs and stale IDs are cleared', () => {
+  const project: Project = {
+    id: 'selection-test',
+    name: 'Selection persistence',
+    width: 1920,
+    height: 1080,
+    frameRate: 30,
+    tracks: [{ id: 'video', name: 'Video 1', kind: 'video', order: 0, muted: false }],
+    clips: [{ id: 'clip-stable-id', assetId: 'asset-stable-id', trackId: 'video', timelineStart: 0, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 }],
+  };
+  const assets = [{ id: 'asset-stable-id' }];
+
+  assert.deepEqual(
+    restoreProjectSelection(project, assets, { clipId: 'clip-stable-id', assetId: 'asset-stable-id' }),
+    { clipId: 'clip-stable-id', assetId: 'asset-stable-id' },
+  );
+  assert.deepEqual(
+    restoreProjectSelection(project, assets, { clipId: 'deleted-clip', assetId: 'deleted-asset' }),
+    { clipId: null, assetId: null },
+  );
 });

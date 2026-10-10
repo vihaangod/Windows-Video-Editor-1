@@ -202,7 +202,35 @@ export type ProjectExport = {
   saveMethod?: 'computer-folder' | 'save-picker' | 'browser-download';
   computerFolderName?: string;
 };
-export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
+export type ProjectSelection = { clipId: string | null; assetId: string | null };
+export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number; selection?: ProjectSelection };
+
+export function restoreProjectSelection(
+  project: Project,
+  assets: Array<Pick<AssetMetadata, 'id'>>,
+  selection?: Partial<ProjectSelection> | null,
+): ProjectSelection {
+  const clipId = selection?.clipId;
+  const assetId = selection?.assetId;
+  return {
+    clipId: clipId && project.clips.some((clip) => clip.id === clipId) ? clipId : null,
+    assetId: assetId && assets.some((asset) => asset.id === assetId) ? assetId : null,
+  };
+}
+
+export function removeAssetReferencesFromProject(project: Project, assetId: string): Project {
+  const linkedClipIds = new Set(project.clips.filter((clip) => clip.assetId === assetId).map((clip) => clip.id));
+  return {
+    ...project,
+    clips: project.clips.filter((clip) =>
+      clip.assetId !== assetId && (!clip.filterEffect || !linkedClipIds.has(clip.filterEffect.targetClipId))
+    ),
+    transitions: (project.transitions || []).filter((transition) =>
+      !linkedClipIds.has(transition.fromClipId) && !linkedClipIds.has(transition.toClipId)
+    ),
+    removedAssetIds: [...new Set([...(project.removedAssetIds || []), assetId])],
+  };
+}
 
 export const DEFAULT_TRANSFORM: ClipTransform = {
   x: 0,

@@ -258,6 +258,15 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .dialog input { width:100%; height:36px; padding:0 10px; background:#171a20; color:#e7e9ea; border:1px solid #414852; border-radius:5px; outline:none; font-size:11px; }
 .dialog .cutline-select-trigger { height:36px; min-height:36px; font-size:11px; }
 .dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:21px; }
+.media-remove-backdrop { z-index:40; }
+.media-remove-dialog { width:min(500px,100%); }
+.media-remove-dialog__heading { display:flex; align-items:center; gap:10px; }
+.media-remove-dialog__heading > span { width:30px; height:30px; display:grid; place-items:center; border:1px solid #65413b; border-radius:6px; color:#eea08f; background:#322724; }
+.media-remove-dialog__heading h2 { flex:1; }
+.media-remove-dialog p { margin:14px 0 0; }
+.media-remove-dialog p strong { color:#e3e6e9; overflow-wrap:anywhere; }
+.media-remove-dialog__confirm { border-color:#8b4e47; color:#f2b1a2; }
+.media-remove-dialog__confirm:hover:not(:disabled) { border-color:#bc655b; background:#3a2928; }
 .export-progress-meta { display:flex; justify-content:space-between; margin-top:14px; color:#aab1b9; font:10px var(--app-font-mono); }
 .progress-track { height:6px; background:#343a43; border-radius:5px; margin-top:6px; overflow:hidden; }.progress-track span { display:block; height:100%; background:#edb94e; transition:width .15s linear; }
 .drop-active:after { content:'Drop local media to import'; position:fixed; z-index:10; inset:12px; display:grid; place-items:center; color:#f2c45d; font-size:24px; font-weight:800; background:rgba(30,35,42,.92); border:2px dashed #d2a849; border-radius:12px; pointer-events:none; }
@@ -305,6 +314,7 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .project-library__row-actions button:hover { border-color:#514a3a; color:#f2bf57; background:#302e28; }
 .project-library__row-actions button:last-child:hover { border-color:#6a3d3a; color:#e9958b; background:#352727; }
 .project-library__empty { padding:22px 10px; color:#929aa4; font-size:11px; text-align:center; }
+.project-library__last-export { display:block; margin-top:3px; color:#a5acb5; font-size:9px; overflow-wrap:anywhere; }
 .dialog-backdrop { overflow:auto; }
 .project-library { width:min(920px,100%); max-height:calc(100dvh - 36px); overflow:hidden; }
 .project-library__heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
