@@ -2182,7 +2182,8 @@ function Home() {
                   <span className="asset-thumb"><Upload size={16} /></span><span className="asset-details"><span className="asset-name">{projectMediaAssets.length ? 'No matching media' : 'Bring in your first clip'}</span><span className="asset-meta">{projectMediaAssets.length ? 'Try another search or workspace' : 'Import files from this PC'}</span></span>
                 </button>
               ) : filteredAssets.map((asset) => (
-                <div key={asset.id} role="button" tabIndex={0} className={`asset-row ${selectedAssetId === asset.id ? 'selected' : ''}`}
+                <div key={asset.id} role="button" tabIndex={0} className={`asset-row${selectedAssetId === asset.id ? ' selected' : ''}${selectedClip?.assetId === asset.id ? ' selected-clip' : ''}`}
+                  aria-current={selectedClip?.assetId === asset.id ? 'true' : undefined}
                   draggable onDragStart={(event) => { event.dataTransfer.setData('application/x-cutline-asset', asset.id); event.dataTransfer.effectAllowed = 'copy'; }}
                   onClick={() => setSelectedAssetId(asset.id)}
                   onDoubleClick={() => addAssetToTimeline(asset, undefined, playhead, libraryWorkspace === 'audio')}

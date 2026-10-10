@@ -83,6 +83,8 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .asset-list { flex:1; min-height:0; overflow:auto; padding:6px 8px; }
 .asset-row { width:100%; min-width:0; display:flex; align-items:center; gap:10px; text-align:left; background:transparent; border:1px solid transparent; border-radius:6px; color:#cdd1d5; padding:8px 8px; margin-bottom:3px; }
 .asset-row:hover, .asset-row.selected { background:#282d35; border-color:#393f49; }
+.asset-row.selected-clip { background:#1b2b22; border-color:#3c714c; box-shadow:inset 0 0 0 1px #2c583d44; color:#e0ece3; }
+.asset-row.selected-clip:hover { background:#20372a; border-color:#4a8b5d; }
 .asset-thumb { width:43px; height:31px; flex:0 0 43px; border-radius:4px; display:grid; place-items:center; color:#e9b84f; background:#31343a; overflow:hidden; }
 .asset-thumb img { width:100%; height:100%; object-fit:contain; }
 .asset-details { min-width:0; flex:1; }
