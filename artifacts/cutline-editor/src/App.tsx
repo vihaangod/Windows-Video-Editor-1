@@ -41,6 +41,10 @@ import {
   adjustTimelineZoom, formatTimelineTick, getPlaybackDeltaSeconds, getTimelineEnd, getTimelineRuler,
   MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM,
 } from '@/lib/timeline-geometry';
+import {
+  getTransitionDirection, getTransitionMode, getTransitionTargetClipId, getTransitionTimelineRange,
+  type TransitionDirection, type TransitionMode,
+} from '@/lib/transition-utils';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
@@ -76,7 +80,7 @@ type FileAccessWindow = Window & {
   showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<WritableDirectoryHandle>;
 };
 const DEFAULT_TRACKS: Track[] = [
-  { id: 'video-1', name: 'Video 1', kind: 'video', order: 0, muted: false, visible: true, locked: false },
+  { id: 'video-1', name: 'Clips', kind: 'video', order: 0, muted: false, visible: true, locked: false },
   { id: 'audio-1', name: 'Audio 1', kind: 'audio', order: 1, muted: false, visible: true, locked: false },
   { id: 'text-1', name: 'Text 1', kind: 'text', order: 2, muted: false, visible: true, locked: false },
 ];
@@ -110,7 +114,9 @@ type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 't
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 type ProjectSaveSnapshot = { project: Project; assets: Asset[]; selection: ProjectSelection };
 type MarkupToolMode = MarkupTool | 'eraser';
-type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip'; id?: string; x: number; y: number };
+type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip' | 'transition'; id?: string; x: number; y: number };
+type MediaImportKind = 'video' | 'audio';
+type TrackImportTarget = { trackId: string; kind: MediaImportKind };
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text' | 'filterEffect'> & {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
@@ -143,6 +149,16 @@ function constrainTimelineFilters(project: Project): Project {
   });
   if (clips.length === project.clips.length && clips.every((clip, index) => clip === project.clips[index])) return project;
   return pruneUnusedEffectsTrack({ ...project, clips });
+}
+function constrainProjectTransitions(project: Project): Project {
+  if (!project.transitions?.length) return project;
+  const transitions = project.transitions.flatMap((transition) => {
+    const range = getTransitionTimelineRange(project, transition);
+    return range ? [{ ...transition, duration: range.duration }] : [];
+  });
+  if (transitions.length === project.transitions.length &&
+    transitions.every((transition, index) => transition === project.transitions?.[index] || transition.duration === project.transitions?.[index].duration)) return project;
+  return { ...project, transitions };
 }
 type TextPointerDrag = {
   clipId: string;
@@ -819,6 +835,7 @@ function Home() {
   const [project, setProject] = useState<Project>(() => createProject());
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [hasActiveProject, setHasActiveProject] = useState(false);
   const [pendingMediaRemoval, setPendingMediaRemoval] = useState<{ projectId: string; assetId: string; name: string; clipCount: number } | null>(null);
@@ -877,6 +894,7 @@ function Home() {
   const [markupDraft, setMarkupDraft] = useState<MarkupDrawing | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
   const [detailsDialog, setDetailsDialog] = useState<{ title: string; rows: Array<[string, string]> } | null>(null);
+  const [transitionDurationDialog, setTransitionDurationDialog] = useState<{ transitionId: string; value: string } | null>(null);
   const [exportName, setExportName] = useState('cutline-export');
   const [exportFolderId, setExportFolderId] = useState('unorganized');
   const [format, setFormat] = useState<'mp4' | 'webm'>('mp4');
@@ -888,6 +906,9 @@ function Home() {
   const [, setHistoryRevision] = useState(0);
   const [mediaRevision, setMediaRevision] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  const trackVideoInput = useRef<HTMLInputElement>(null);
+  const trackAudioInput = useRef<HTMLInputElement>(null);
+  const trackImportTarget = useRef<TrackImportTarget | null>(null);
   const relinkFileInput = useRef<HTMLInputElement>(null);
   const relinkAssetId = useRef<string | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1048,7 +1069,7 @@ function Home() {
   }, []);
   const commit = useCallback((recipe: (current: Project) => Project) => {
     setProject((current) => {
-      const next = constrainTimelineFilters(recipe(current));
+      const next = constrainProjectTransitions(constrainTimelineFilters(recipe(current)));
       if (next !== current) {
         history.current = [...history.current.slice(-39), current];
         future.current = [];
@@ -1303,7 +1324,6 @@ function Home() {
   }, [selectedClipId, selectedClip]);
   const selectedTrack = selectedClip ? project.tracks.find((track) => track.id === selectedClip.trackId) : undefined;
   const selectedClipLocked = Boolean(selectedTrack?.locked);
-  const selectedClipHasTransition = Boolean(selectedClip && project.transitions?.some((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id));
   const nextTransitionClip = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
     ? project.clips
       .filter((clip) => {
@@ -1331,10 +1351,22 @@ function Home() {
     : previousIsAdjacent && previousTransitionClip && selectedClip
       ? { fromClip: previousTransitionClip, toClip: selectedClip }
       : undefined;
-  const canApplySelectedTransition = Boolean(selectedClip && !selectedClipLocked && selectedClipTransitionPair);
-  const selectedTransition = selectedClip
-    ? project.transitions?.find((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id) || null
-    : null;
+  const selectedTransition = (selectedTransitionId
+    ? project.transitions?.find((transition) => transition.id === selectedTransitionId)
+    : undefined) || (selectedClip
+    ? project.transitions?.find((transition) => transition.fromClipId === selectedClip.id || transition.toClipId === selectedClip.id)
+    : null);
+  const selectedTransitionTarget = selectedTransition
+    ? project.clips.find((clip) => clip.id === getTransitionTargetClipId(selectedTransition))
+    : undefined;
+  const selectedTransitionLocked = Boolean(selectedTransition && (
+    getTransitionMode(selectedTransition) === 'between'
+      ? [selectedTransition.fromClipId, selectedTransition.toClipId].some((id) => {
+        const clip = project.clips.find((item) => item.id === id);
+        return clip && project.tracks.find((track) => track.id === clip.trackId)?.locked;
+      })
+      : selectedTransitionTarget && project.tracks.find((track) => track.id === selectedTransitionTarget.trackId)?.locked
+  ));
   const orderedTracks = [...project.tracks].sort((a, b) => a.order - b.order);
   const activeVisualClips = useMemo(() => project.clips.filter((clip) => {
     const track = project.tracks.find((t) => t.id === clip.trackId);
@@ -1356,6 +1388,15 @@ function Home() {
     selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
     selectedAsset && (isVideo(selectedAsset) || isImage(selectedAsset)),
   );
+  const canApplySelectedTransition = Boolean(selectedClipIsVideo && !selectedClipLocked);
+  const canApplyBetweenTransition = Boolean(selectedClipTransitionPair && canApplySelectedTransition);
+  const transitionDisabledReason = selectedTransition
+    ? selectedTransitionLocked ? 'Unlock the transition’s video track to edit it.' : undefined
+    : !selectedClipIsVideo
+      ? 'Select a video clip to add an entrance or exit transition.'
+      : selectedClipLocked
+        ? 'Unlock the selected track to add a transition.'
+        : undefined;
   const activeVideoClip = [...activeVisualClips].reverse().find((clip) => {
     const track = project.tracks.find((item) => item.id === clip.trackId);
     const asset = assets.find((item) => item.id === clip.assetId);
@@ -1376,13 +1417,6 @@ function Home() {
       ? 'Unlock the selected track to apply an effect.'
       : !selectedClipIsVisual
         ? 'Effects are available on video and image clips, not audio or title clips.'
-        : undefined;
-  const transitionDisabledReason = !selectedClip
-    ? 'Select two adjacent video clips on the same track to apply a transition.'
-    : selectedClipLocked
-      ? 'Unlock the selected track to apply a transition.'
-      : !canApplySelectedTransition
-        ? 'Transitions require two adjacent video clips on the same track.'
         : undefined;
   const effectWorkspaceDisabledReason = libraryWorkspace === 'filters'
     ? filterDisabledReason
@@ -1622,10 +1656,17 @@ function Home() {
     return () => window.clearInterval(timer);
   }, [exporting]);
 
-  const importFiles = useCallback(async (files: FileList | File[]) => {
+  const importFiles = useCallback(async (files: FileList | File[], target?: TrackImportTarget) => {
     if (window.cutlineDesktop && desktopCloseRequestedRef.current) {
       notify('Wait until the desktop close prompt finishes before importing more media.', true);
       return false;
+    }
+    if (target) {
+      const track = projectRef.current.tracks.find((item) => item.id === target.trackId);
+      if (!track || track.kind !== target.kind || track.locked) {
+        notify(track?.locked ? 'Unlock that track before importing media.' : 'The selected upload track is no longer available.', true);
+        return false;
+      }
     }
     beginMediaImport();
     const targetProjectId = projectRef.current.id;
@@ -1633,9 +1674,15 @@ function Home() {
     let importComplete = false;
     try {
       for (const file of Array.from(files)) {
-        if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
-          /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|ogg|m4a|aac|flac|jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name))) {
+        const isVideoFile = file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(file.name);
+        const isAudioFile = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name);
+        const isImageFile = file.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name);
+        if (!(isVideoFile || isAudioFile || isImageFile)) {
           notify(`${file.name} is not a supported media file.`, true); continue;
+        }
+        if (target && (target.kind === 'video' ? !isVideoFile : !isAudioFile)) {
+          notify(`${file.name} is not a supported ${target.kind} file for this track.`, true);
+          continue;
         }
         const asset: Asset = { id: uid(), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, blob: file };
         try { await inspectImportedAsset(asset); } catch { notify(`Could not read metadata for ${file.name}; it can still be added, but playback or export may not be supported.`, true); }
@@ -1659,32 +1706,83 @@ function Home() {
           return false;
         }
         setAssets((current) => [...current, ...additions]);
-        setSelectedAssetId(additions[0].id);
         importComplete = true;
-        const silentVideos = additions.filter((asset) => isVideo(asset) && asset.hasAudio === false);
-        const audioNote = silentVideos.length
-          ? ` No embedded audio track: ${silentVideos.map((asset) => asset.name).join(', ')}.`
-          : '';
-        notify(`${additions.length} file${additions.length === 1 ? '' : 's'} added to this device's media bin.${audioNote}`);
+        if (target) {
+          const destination = projectRef.current.tracks.find((item) => item.id === target.trackId);
+          if (!destination || destination.kind !== target.kind || destination.locked) {
+            notify('Media was saved to this project, but the destination track changed during import. Add the files from the media bin.', true);
+          } else {
+            const initialAt = Math.max(0, playhead);
+            const occupied = [...projectRef.current.clips];
+            const inserted: Clip[] = [];
+            for (const asset of additions) {
+              const duration = Math.max(.15, asset.duration || 5);
+              let start = initialAt;
+              for (let pass = 0; pass <= occupied.length + inserted.length; pass += 1) {
+                const collision = [...occupied, ...inserted]
+                  .filter((clip) => clip.trackId === destination.id)
+                  .sort((a, b) => a.timelineStart - b.timelineStart)
+                  .find((clip) => start < clip.timelineStart + getClipDuration(clip) - .0001 && start + duration > clip.timelineStart + .0001);
+                if (!collision) break;
+                start = collision.timelineStart + getClipDuration(collision);
+              }
+              inserted.push({
+                id: uid(),
+                assetId: asset.id,
+                trackId: destination.id,
+                timelineStart: start,
+                sourceIn: 0,
+                sourceOut: duration,
+                volume: 1,
+                speed: 1,
+                transform: { ...DEFAULT_TRANSFORM },
+                effects: { ...DEFAULT_EFFECTS },
+                opacity: 1,
+                fadeIn: 0,
+                fadeOut: 0,
+              });
+            }
+            commit((current) => current.tracks.some((item) => item.id === destination.id && item.kind === target.kind && !item.locked)
+              ? { ...current, clips: [...current.clips, ...inserted] }
+              : current);
+            if (inserted.length) {
+              setSelectedClipId(inserted[0].id);
+              setSelectedAssetId(additions[0].id);
+              setPlayhead(inserted[0].timelineStart);
+              notify(`${additions.length} ${target.kind === 'video' ? 'video clip' : 'audio'} file${additions.length === 1 ? '' : 's'} added to ${destination.name} without overlapping existing clips.`);
+            }
+          }
+        } else {
+          setSelectedAssetId(additions[0].id);
+          const silentVideos = additions.filter((asset) => isVideo(asset) && asset.hasAudio === false);
+          const audioNote = silentVideos.length
+            ? ` No embedded audio track: ${silentVideos.map((asset) => asset.name).join(', ')}.`
+            : '';
+          notify(`${additions.length} file${additions.length === 1 ? '' : 's'} added to this device's media bin.${audioNote}`);
+        }
       }
     } finally {
       endMediaImport();
     }
     return importComplete;
-  }, [notify]);
-  const chooseMediaFiles = async () => {
+  }, [commit, notify, playhead]);
+  const chooseMediaFiles = async (kind?: MediaImportKind, trackId?: string) => {
     const desktop = window.cutlineDesktop;
     if (!desktop) {
-      fileInput.current?.click();
+      if (kind && trackId) {
+        trackImportTarget.current = { kind, trackId };
+        (kind === 'video' ? trackVideoInput : trackAudioInput).current?.click();
+      } else fileInput.current?.click();
       return;
     }
     if (mediaImporting || desktopCloseRequestedRef.current) return;
     beginMediaImport();
     let selectedFiles: Awaited<ReturnType<typeof desktop.pickMediaFiles>> = [];
     try {
-      selectedFiles = await desktop.pickMediaFiles();
+      selectedFiles = await desktop.pickMediaFiles(kind);
       if (!selectedFiles.length) return;
 
+      const importedFiles: File[] = [];
       for (const selected of selectedFiles) {
         const response = await fetch(selected.url);
         if (!response.ok) throw new Error(`Could not read “${selected.name}” from its selected source file.`);
@@ -1692,9 +1790,9 @@ function Home() {
         if (blob.size !== selected.byteSize) {
           throw new Error(`The selected source file “${selected.name}” changed while it was being imported.`);
         }
-        const imported = await importFiles([new File([blob], selected.name, { type: selected.mimeType })]);
-        if (!imported) return;
+        importedFiles.push(new File([blob], selected.name, { type: selected.mimeType }));
       }
+      await importFiles(importedFiles, kind && trackId ? { kind, trackId } : undefined);
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not import the selected media files.', true);
     } finally {
@@ -1871,10 +1969,20 @@ function Home() {
           },
         ];
       }),
-      transitions: (current.transitions || []).map((transition) =>
-        transition.fromClipId === selectedClip.id ? { ...transition, fromClipId: right.id } : transition
-      ),
+      transitions: (current.transitions || []).map((transition) => {
+        const mode = getTransitionMode(transition);
+        const targetId = getTransitionTargetClipId(transition);
+        if (mode === 'entrance' && targetId === selectedClip.id) return transition;
+        if (mode === 'exit' && targetId === selectedClip.id) {
+          return { ...transition, fromClipId: right.id, toClipId: right.id, targetClipId: right.id };
+        }
+        if (mode === 'between' && transition.fromClipId === selectedClip.id) {
+          return { ...transition, fromClipId: right.id };
+        }
+        return transition;
+      }),
     }));
+    setSelectedTransitionId(null);
     setSelectedClipId(right.id);
   };
   const trimAtPlayhead = (side: 'start' | 'end') => {
@@ -2038,7 +2146,7 @@ function Home() {
   };
   const addTrack = (kind: TrackKind) => commit((current) => ({
     ...current,
-    tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'} ${current.tracks.filter((t) => t.kind === kind).length + 1}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
+    tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' && current.tracks.filter((t) => t.kind === kind).length === 0 ? 'Clips' : kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'}${kind === 'video' && current.tracks.filter((t) => t.kind === kind).length === 0 ? '' : ` ${current.tracks.filter((t) => t.kind === kind).length + 1}`}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
   }));
   const moveClip = (clipId: string, nextStart: number, targetTrackId?: string) => {
     const movingClip = projectRef.current.clips.find((clip) => clip.id === clipId);
@@ -2214,30 +2322,101 @@ function Home() {
     setPlayhead(start);
     notify(`${preset.name} added to the Effects track for ${duration.toFixed(2)} seconds.`);
   };
-  const applySelectedTransition = (type: ClipTransition['type'], requestedDuration: number) => {
-    if (!canApplySelectedTransition || !selectedClipTransitionPair) {
-      notify(transitionDisabledReason || 'Transitions require two adjacent video clips on the same track.', true);
+  const applySelectedTransition = (
+    type: ClipTransition['type'],
+    requestedDuration: number,
+    mode: TransitionMode = 'between',
+    direction: TransitionDirection = 'right',
+  ) => {
+    const editing = selectedTransitionId ? selectedTransition : selectedTransition && getTransitionMode(selectedTransition) === mode
+      ? selectedTransition
+      : null;
+    if (editing && selectedTransitionLocked) {
+      notify('Unlock the transition’s video track before editing it.', true);
       return;
     }
-    const next: ClipTransition = {
-      id: uid(),
-      fromClipId: selectedClipTransitionPair.fromClip.id,
-      toClipId: selectedClipTransitionPair.toClip.id,
-      type,
-      duration: Math.min(
-        Math.max(.1, requestedDuration),
-        Math.max(.1, Math.min(getClipDuration(selectedClipTransitionPair.fromClip), getClipDuration(selectedClipTransitionPair.toClip)) * 2),
-      ),
+
+    const isTransitionableClip = (clip: Clip | undefined) => {
+      const track = clip && project.tracks.find((item) => item.id === clip.trackId);
+      const asset = clip?.assetId && assets.find((item) => item.id === clip.assetId);
+      return Boolean(clip && track?.kind === 'video' && !track.locked && !clip.text && !clip.audioOnly && asset && isVideo(asset));
     };
-    commit((current) => ({
-      ...current,
-      transitions: [...(current.transitions || []).filter((item) =>
-        !(item.fromClipId === next.fromClipId && item.toClipId === next.toClipId)
-      ), next],
-    }));
-    notify(`${type.replaceAll('-', ' ')} applied between the adjacent clips.`);
+
+    let fromClip: Clip | undefined;
+    let toClip: Clip | undefined;
+    let targetClip: Clip | undefined;
+    if (mode === 'between') {
+      const existingFrom = editing && getTransitionMode(editing) === 'between'
+        ? project.clips.find((clip) => clip.id === editing.fromClipId)
+        : undefined;
+      const existingTo = editing && getTransitionMode(editing) === 'between'
+        ? project.clips.find((clip) => clip.id === editing.toClipId)
+        : undefined;
+      const useExistingPair = Boolean(existingFrom && existingTo && getTransitionTimelineRange(project, editing!));
+      fromClip = useExistingPair ? existingFrom : selectedClipTransitionPair?.fromClip;
+      toClip = useExistingPair ? existingTo : selectedClipTransitionPair?.toClip;
+      if (!fromClip || !toClip || !isTransitionableClip(fromClip) || !isTransitionableClip(toClip) ||
+        fromClip.trackId !== toClip.trackId ||
+        Math.abs(fromClip.timelineStart + getClipDuration(fromClip) - toClip.timelineStart) > .05) {
+        notify('Between-clip transitions need two touching video clips on the same unlocked track.', true);
+        return;
+      }
+      targetClip = toClip;
+    } else {
+      const currentTarget = editing && getTransitionMode(editing) === mode
+        ? project.clips.find((clip) => clip.id === getTransitionTargetClipId(editing))
+        : undefined;
+      targetClip = currentTarget || selectedClip || undefined;
+      if (!isTransitionableClip(targetClip)) {
+        notify(transitionDisabledReason || 'Select a video clip on an unlocked track first.', true);
+        return;
+      }
+      fromClip = targetClip;
+      toClip = targetClip;
+    }
+    if (!fromClip || !toClip) {
+      notify('Select a valid video clip or adjacent pair first.', true);
+      return;
+    }
+
+    const next: ClipTransition = {
+      id: editing?.id || uid(),
+      fromClipId: fromClip.id,
+      toClipId: toClip.id,
+      targetClipId: mode === 'between' ? undefined : targetClip?.id,
+      type,
+      duration: Math.max(.1, requestedDuration),
+      mode,
+      direction,
+    };
+    const samePlacement = (item: ClipTransition) => mode === 'between'
+      ? getTransitionMode(item) === 'between' && item.fromClipId === next.fromClipId && item.toClipId === next.toClipId
+      : getTransitionMode(item) === mode && getTransitionTargetClipId(item) === next.targetClipId;
+    const conflict = (project.transitions || []).some((item) => item.id !== next.id && samePlacement(item));
+    if (conflict) {
+      notify('That clip edge already has a transition. Select it on the timeline to edit it.', true);
+      return;
+    }
+    const transitions = [...(project.transitions || []).filter((item) => item.id !== next.id), next];
+    const range = getTransitionTimelineRange({ ...project, transitions }, next);
+    if (!range) {
+      notify('That clip edge already has a transition, or the duration does not fit. Select the transition on the timeline to edit it.', true);
+      return;
+    }
+    next.duration = range.duration;
+    commit((current) => ({ ...current, transitions: [...(current.transitions || []).filter((item) => item.id !== next.id && !samePlacement(item)), next] }));
+    setSelectedTransitionId(next.id);
+    notify(`${type.replaceAll('-', ' ')} ${mode === 'between' ? 'added between the clips' : `added to the clip ${mode}`}.`);
   };
+
   const removeSelectedTransition = () => {
+    if (selectedTransition) {
+      if (selectedTransitionLocked) { notify('Unlock the transition’s video track before removing it.', true); return; }
+      commit((current) => ({ ...current, transitions: (current.transitions || []).filter((item) => item.id !== selectedTransition.id) }));
+      setSelectedTransitionId(null);
+      notify('Transition removed.');
+      return;
+    }
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock the track before removing its transition.', true); return; }
     commit((current) => ({
@@ -2247,6 +2426,119 @@ function Home() {
       ),
     }));
     notify('Transitions touching the selected clip were removed.');
+  };
+
+  const moveTransitionToTrackTime = (transitionId: string, targetTrackId: string, at: number) => {
+    const moving = projectRef.current.transitions?.find((item) => item.id === transitionId);
+    const track = projectRef.current.tracks.find((item) => item.id === targetTrackId);
+    if (!moving || !track || track.kind !== 'video' || track.locked) {
+      notify('Drop transitions onto an unlocked video track.', true);
+      return;
+    }
+    const mode = getTransitionMode(moving);
+    const eligible = projectRef.current.clips
+      .filter((clip) => clip.trackId === targetTrackId && !clip.text && !clip.audioOnly && !clip.filterEffect &&
+        clip.assetId && assetsRef.current.some((asset) => asset.id === clip.assetId && isVideo(asset)))
+      .sort((a, b) => a.timelineStart - b.timelineStart);
+    let moved: ClipTransition | null = null;
+    if (mode === 'between') {
+      const pairs = eligible.slice(0, -1).flatMap((fromClip, index) => {
+        const toClip = eligible[index + 1];
+        if (Math.abs(fromClip.timelineStart + getClipDuration(fromClip) - toClip.timelineStart) > .05) return [];
+        const boundary = fromClip.timelineStart + getClipDuration(fromClip);
+        return [{ fromClip, toClip, boundary }];
+      });
+      const closest = pairs.sort((a, b) => Math.abs(a.boundary - at) - Math.abs(b.boundary - at))[0];
+      if (closest) moved = { ...moving, fromClipId: closest.fromClip.id, toClipId: closest.toClip.id, targetClipId: undefined };
+    } else {
+      const closest = eligible
+        .map((clip) => ({ clip, anchor: mode === 'entrance' ? clip.timelineStart : clip.timelineStart + getClipDuration(clip) }))
+        .sort((a, b) => Math.abs(a.anchor - at) - Math.abs(b.anchor - at))[0];
+      if (closest) moved = {
+        ...moving,
+        fromClipId: closest.clip.id,
+        toClipId: closest.clip.id,
+        targetClipId: closest.clip.id,
+      };
+    }
+    if (!moved) {
+      notify(mode === 'between' ? 'No adjacent video-clip boundary is available on that track.' : 'No video clip is available at that transition edge.', true);
+      return;
+    }
+    const conflict = (projectRef.current.transitions || []).some((item) =>
+      item.id !== moving.id && getTransitionMode(item) === mode &&
+      (mode === 'between'
+        ? item.fromClipId === moved!.fromClipId && item.toClipId === moved!.toClipId
+        : getTransitionTargetClipId(item) === moved!.targetClipId),
+    );
+    if (conflict) {
+      notify('That clip edge already has a transition.', true);
+      return;
+    }
+    const transitions = (projectRef.current.transitions || []).map((item) => item.id === moving.id ? moved! : item);
+    const range = getTransitionTimelineRange({ ...projectRef.current, transitions }, moved);
+    if (!range) {
+      notify('The transition cannot fit at that clip edge.', true);
+      return;
+    }
+    moved.duration = range.duration;
+    commit((current) => ({ ...current, transitions: (current.transitions || []).map((item) => item.id === moving.id ? moved! : item) }));
+    setSelectedTransitionId(moving.id);
+  };
+
+  const duplicateSelectedTransition = () => {
+    if (!selectedTransition || selectedTransitionLocked) {
+      notify(selectedTransition ? 'Unlock the transition’s video track before duplicating it.' : 'Select a transition first.', true);
+      return;
+    }
+    const source = selectedTransition;
+    const mode = getTransitionMode(source);
+    const trackClips = project.clips.filter((clip) => {
+      const asset = clip.assetId ? assets.find((item) => item.id === clip.assetId) : undefined;
+      return project.tracks.find((item) => item.id === clip.trackId)?.kind === 'video' && !clip.text && !clip.audioOnly && asset && isVideo(asset);
+    }).sort((a, b) => a.timelineStart - b.timelineStart);
+    let duplicate: ClipTransition | null = null;
+    if (mode === 'between') {
+      const existingPairs = new Set((project.transitions || []).filter((item) => getTransitionMode(item) === 'between' && item.id !== source.id).map((item) => `${item.fromClipId}:${item.toClipId}`));
+      const candidate = trackClips.slice(0, -1).map((fromClip, index) => ({ fromClip, toClip: trackClips[index + 1] }))
+        .find(({ fromClip, toClip }) => fromClip.trackId === toClip.trackId &&
+          Math.abs(fromClip.timelineStart + getClipDuration(fromClip) - toClip.timelineStart) <= .05 &&
+          !existingPairs.has(`${fromClip.id}:${toClip.id}`) &&
+          (fromClip.id !== source.fromClipId || toClip.id !== source.toClipId));
+      if (candidate) duplicate = { ...source, id: uid(), fromClipId: candidate.fromClip.id, toClipId: candidate.toClip.id, targetClipId: undefined };
+    } else {
+      const occupied = new Set((project.transitions || []).filter((item) => getTransitionMode(item) === mode && item.id !== source.id).map(getTransitionTargetClipId));
+      const candidate = trackClips.find((clip) => !occupied.has(clip.id) && clip.id !== getTransitionTargetClipId(source));
+      if (candidate) duplicate = { ...source, id: uid(), fromClipId: candidate.id, toClipId: candidate.id, targetClipId: candidate.id };
+      if (!duplicate) {
+        const oppositeMode: TransitionMode = mode === 'entrance' ? 'exit' : 'entrance';
+        const sourceTarget = getTransitionTargetClipId(source);
+        const oppositeOccupied = (project.transitions || []).some((item) =>
+          getTransitionMode(item) === oppositeMode && getTransitionTargetClipId(item) === sourceTarget,
+        );
+        if (!oppositeOccupied && trackClips.some((clip) => clip.id === sourceTarget)) {
+          duplicate = {
+            ...source,
+            id: uid(),
+            fromClipId: sourceTarget,
+            toClipId: sourceTarget,
+            targetClipId: sourceTarget,
+            mode: oppositeMode,
+          };
+        }
+      }
+    }
+    if (!duplicate) {
+      notify('No other compatible clip edge is available for a duplicate.', true);
+      return;
+    }
+    const transitions = [...(project.transitions || []), duplicate];
+    const range = getTransitionTimelineRange({ ...project, transitions }, duplicate);
+    if (!range) { notify('The duplicate transition does not fit its destination clip.', true); return; }
+    duplicate.duration = range.duration;
+    commit((current) => ({ ...current, transitions: [...(current.transitions || []), duplicate!] }));
+    setSelectedTransitionId(duplicate.id);
+    notify('Transition duplicated at the next available compatible clip edge.');
   };
   const setSelectedFit = (fit: 'contain' | 'cover') => {
     if (!selectedClip) return;
@@ -3671,6 +3963,14 @@ function Home() {
 
   const contextMenuAsset = contextMenu?.kind === 'media' ? assets.find((asset) => asset.id === contextMenu.id) : undefined;
   const contextMenuClip = contextMenu?.kind === 'clip' ? project.clips.find((clip) => clip.id === contextMenu.id) : undefined;
+  const contextMenuTransition = contextMenu?.kind === 'transition' ? project.transitions?.find((item) => item.id === contextMenu.id) : undefined;
+  const contextMenuTransitionLocked = Boolean(contextMenuTransition && [
+    contextMenuTransition.fromClipId,
+    contextMenuTransition.toClipId,
+  ].some((id) => {
+    const clip = project.clips.find((item) => item.id === id);
+    return clip && project.tracks.find((track) => track.id === clip.trackId)?.locked;
+  }));
   const contextMenuClipAsset = contextMenuClip?.assetId ? assets.find((asset) => asset.id === contextMenuClip.assetId) : undefined;
   const contextMenuClipLocked = Boolean(contextMenuClip && project.tracks.find((track) => track.id === contextMenuClip.trackId)?.locked);
   const contextMenuProject = contextMenu?.kind === 'project' ? savedProjects.find((record) => record.project.id === contextMenu.id) : undefined;
@@ -3783,6 +4083,56 @@ function Home() {
     { label: 'Project Details', icon: <Info size={14} />, action: () => void showProjectDetails(contextMenuProject) },
     { label: 'Create Backup', icon: <Download size={14} />, action: () => void makeProjectBackup(contextMenuProject) },
     { label: 'Delete Project', icon: <Trash2 size={14} />, action: () => void deleteSavedProject(contextMenuProject), destructive: true, separatorBefore: true },
+  ] : contextMenu?.kind === 'transition' && contextMenuTransition ? [
+    {
+      label: 'Edit Duration',
+      icon: <SlidersHorizontal size={14} />,
+      disabled: contextMenuTransitionLocked,
+      action: () => {
+        setSelectedTransitionId(contextMenuTransition.id);
+        setTransitionDurationDialog({ transitionId: contextMenuTransition.id, value: getTransitionTimelineRange(project, contextMenuTransition)?.duration.toFixed(2) || contextMenuTransition.duration.toFixed(2) });
+      },
+    },
+    {
+      label: 'Change Transition',
+      icon: <Sparkles size={14} />,
+      disabled: contextMenuTransitionLocked,
+      action: () => {
+        setSelectedTransitionId(contextMenuTransition.id);
+        setLibraryWorkspace('transitions');
+      },
+    },
+    {
+      label: 'Change Direction',
+      icon: <ArrowUp size={14} />,
+      disabled: contextMenuTransitionLocked || !['wipe', 'slide'].includes(contextMenuTransition.type),
+      action: () => {
+        const directions: TransitionDirection[] = ['left', 'right', 'up', 'down'];
+        const current = getTransitionDirection(contextMenuTransition);
+        const direction = directions[(directions.indexOf(current) + 1) % directions.length];
+        commit((project) => ({ ...project, transitions: (project.transitions || []).map((item) => item.id === contextMenuTransition.id ? { ...item, direction } : item) }));
+        setSelectedTransitionId(contextMenuTransition.id);
+        notify(`Transition direction changed to ${direction}.`);
+      },
+    },
+    {
+      label: 'Duplicate',
+      icon: <Copy size={14} />,
+      disabled: contextMenuTransitionLocked,
+      action: duplicateSelectedTransition,
+    },
+    {
+      label: 'Delete Transition',
+      icon: <Trash2 size={14} />,
+      disabled: contextMenuTransitionLocked,
+      destructive: true,
+      separatorBefore: true,
+      action: () => {
+        commit((project) => ({ ...project, transitions: (project.transitions || []).filter((item) => item.id !== contextMenuTransition.id) }));
+        setSelectedTransitionId(null);
+        notify('Transition removed.');
+      },
+    },
   ] : contextMenu?.kind === 'empty' ? [
     { label: 'Import Media', icon: <Upload size={14} />, action: () => fileInput.current?.click() },
     { label: 'Refresh Media List', icon: <RefreshCw size={14} />, action: () => void refreshMedia(), separatorBefore: true },
@@ -3793,7 +4143,9 @@ function Home() {
       onDragEnter={(event) => {
         event.preventDefault();
         const types = Array.from(event.dataTransfer.types);
-        if (!types.includes('application/x-cutline-asset') && !types.includes('application/x-cutline-clip')) setDropActive(true);
+        if (!types.includes('application/x-cutline-asset') &&
+          !types.includes('application/x-cutline-clip') &&
+          !types.includes('application/x-cutline-transition')) setDropActive(true);
       }}
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={(event) => { if (event.currentTarget === event.target) setDropActive(false); }}
@@ -3809,6 +4161,36 @@ function Home() {
            } else void importFiles(event.dataTransfer.files);
          }
       }}>
+      <input
+        ref={trackVideoInput}
+        hidden
+        type="file"
+        multiple
+        accept="video/*,.avi,.m4v,.mkv"
+        aria-label="Choose video clips for the Clips track"
+        onChange={(event) => {
+          const target = trackImportTarget.current;
+          trackImportTarget.current = null;
+          if (event.currentTarget.files && target) void importFiles(event.currentTarget.files, target);
+          event.currentTarget.value = '';
+        }}
+        data-testid="input-track-video-files"
+      />
+      <input
+        ref={trackAudioInput}
+        hidden
+        type="file"
+        multiple
+        accept="audio/*,.aac,.flac,.m4a,.ogg"
+        aria-label="Choose audio files for an audio track"
+        onChange={(event) => {
+          const target = trackImportTarget.current;
+          trackImportTarget.current = null;
+          if (event.currentTarget.files && target) void importFiles(event.currentTarget.files, target);
+          event.currentTarget.value = '';
+        }}
+        data-testid="input-track-audio-files"
+      />
       <header className="topbar">
           <div className="brand" aria-label="Cutline">
           <img className="brand-mark" src={cutlineAppIcon} alt="" />
@@ -3970,11 +4352,12 @@ function Home() {
               onFilter={applySelectedFilter}
               onTransition={applySelectedTransition}
               onRemoveTransition={removeSelectedTransition}
-              hasSelectedTransition={selectedClipHasTransition && !selectedClipLocked}
+              hasSelectedTransition={Boolean(selectedTransition) && !selectedTransitionLocked}
               selectedTransition={selectedTransition}
               selectedEffects={selectedClip?.effects}
               thumbnail={selectedAsset?.thumbnail}
               canApplyTransition={canApplySelectedTransition}
+              canApplyBetweenTransition={canApplyBetweenTransition}
             />}
           {libraryWorkspace === 'markup' && <MarkupWorkspace
             tool={markupTool}
@@ -4173,6 +4556,15 @@ function Home() {
                 <div className="track-meta">
                    {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : track.kind === 'effects' ? <WandSparkles size={13} color="#e9ad4e" /> : <Type size={13} color="#e6b84f" />}
                   <span className="track-name">{track.name}</span>
+                  {(track.kind === 'video' || track.kind === 'audio') && <button
+                    className="icon-btn track-upload-control"
+                    type="button"
+                    title={track.kind === 'video' ? 'Add video clips to this track' : 'Add audio to this track'}
+                    aria-label={track.kind === 'video' ? `Add video clips to ${track.name}` : `Add audio to ${track.name}`}
+                    disabled={track.locked || mediaImporting}
+                    onClick={() => void chooseMediaFiles(track.kind === 'video' ? 'video' : 'audio', track.id)}
+                    data-testid={`button-upload-track-${track.id}`}
+                  ><Plus size={12} /></button>}
                   {track.kind !== 'audio' && <button className={`icon-btn ${track.visible === false ? 'active' : ''}`} title={track.visible === false ? 'Show track' : 'Hide track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, visible: t.visible === false } : t) }))} data-testid={`button-visibility-track-${track.id}`}>{track.visible === false ? <EyeOff size={12} /> : <Eye size={12} />}</button>}
                    {(track.kind === 'audio' || track.kind === 'video') && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
                   <button className={`icon-btn ${track.locked ? 'active' : ''}`} title={track.locked ? 'Unlock track' : 'Lock track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, locked: !t.locked } : t) }))} data-testid={`button-lock-track-${track.id}`}>{track.locked ? <LockKeyhole size={11} /> : <UnlockKeyhole size={11} />}</button>
@@ -4188,9 +4580,14 @@ function Home() {
                   const point = timelinePosition(event, track.id);
                   const clipId = event.dataTransfer.getData('application/x-cutline-clip');
                   const assetId = event.dataTransfer.getData('application/x-cutline-asset');
-                  if (clipId) moveClip(clipId, point.time - Number(event.dataTransfer.getData('application/x-cutline-offset')), track.id);
+                  const transitionId = event.dataTransfer.getData('application/x-cutline-transition');
+                  if (transitionId) moveTransitionToTrackTime(transitionId, track.id, point.time);
+                  else if (clipId) moveClip(clipId, point.time - Number(event.dataTransfer.getData('application/x-cutline-offset')), track.id);
                   else { const asset = assets.find((item) => item.id === assetId); if (asset) addAssetToTimeline(asset, track.id, point.time); }
-            if (!clipId && !assetId && event.dataTransfer.files.length) void importFiles(event.dataTransfer.files);
+            if (!transitionId && !clipId && !assetId && event.dataTransfer.files.length) {
+              if (track.kind === 'video' || track.kind === 'audio') void importFiles(event.dataTransfer.files, { trackId: track.id, kind: track.kind });
+              else void importFiles(event.dataTransfer.files);
+            }
                 }} onClick={(event) => {
                   if ((event.target as HTMLElement).closest('.clip')) return;
                   const rect = event.currentTarget.getBoundingClientRect();
@@ -4206,6 +4603,7 @@ function Home() {
                       style={{ left: clip.timelineStart * scale, width: Math.max(8, duration * scale), opacity: track.muted ? .5 : 1 }}
                       tabIndex={0}
                       onContextMenu={(event) => {
+                        setSelectedTransitionId(null);
                         setSelectedClipId(clip.id);
                         setSelectedAssetId(asset?.id || null);
                         openContextMenu(event, 'clip', clip.id);
@@ -4213,18 +4611,21 @@ function Home() {
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return;
                         if (event.key === 'Enter') {
+                          setSelectedTransitionId(null);
                           setSelectedClipId(clip.id);
                           setSelectedAssetId(asset?.id || null);
                         }
                         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                          setSelectedTransitionId(null);
                           setSelectedClipId(clip.id);
                           setSelectedAssetId(asset?.id || null);
                           openKeyboardContextMenu(event, 'clip', clip.id);
                         }
                       }}
-                      onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); setSelectedAssetId(asset?.id || null); }}
+                      onClick={(event) => { event.stopPropagation(); setSelectedTransitionId(null); setSelectedClipId(clip.id); setSelectedAssetId(asset?.id || null); }}
                       onDoubleClick={(event) => {
                         event.stopPropagation();
+                        setSelectedTransitionId(null);
                         setSelectedClipId(clip.id);
                         setSelectedAssetId(asset?.id || null);
                         setPlayhead(clip.timelineStart);
@@ -4277,31 +4678,77 @@ function Home() {
                 <span className="track-name">Transitions</span>
                 <span className="track-row__count">{project.transitions?.length}</span>
               </div>
-              <div className="track-lane" style={{ backgroundSize: `${timelineRuler.interval * scale}px 100%` }} onClick={(event) => {
+              <div className="track-lane" style={{ backgroundSize: `${timelineRuler.interval * scale}px 100%` }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const transitionId = event.dataTransfer.getData('application/x-cutline-transition');
+                const moving = project.transitions?.find((item) => item.id === transitionId);
+                const sourceClip = moving && project.clips.find((clip) => clip.id === moving.fromClipId);
+                const rect = event.currentTarget.getBoundingClientRect();
+                const at = Math.max(0, (event.clientX - rect.left) / scale);
+                if (transitionId && sourceClip) moveTransitionToTrackTime(transitionId, sourceClip.trackId, at);
+              }} onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
                 setPlayhead(snapTimelineTime(Math.max(0, (event.clientX - rect.left) / scale)));
               }} data-testid="lane-transitions">
                 {(project.transitions || []).map((transition) => {
+                  const range = getTransitionTimelineRange(project, transition);
+                  if (!range) return null;
+                  const targetId = range.mode === 'between' ? transition.fromClipId : getTransitionTargetClipId(transition);
+                  const targetClip = project.clips.find((clip) => clip.id === targetId);
+                  if (!targetClip) return null;
                   const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
                   const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
-                  if (!fromClip || !toClip) return null;
-                  const boundary = fromClip.timelineStart + getClipDuration(fromClip);
+                  const transitionLocked = Boolean([fromClip, toClip].some((clip) => clip && project.tracks.find((track) => track.id === clip.trackId)?.locked));
+                  const modeLabel = range.mode === 'between' ? 'Between clips' : `Clip ${range.mode}`;
+                  const title = `${modeLabel} · ${transition.type.replaceAll('-', ' ')} · ${range.duration.toFixed(2)} seconds · ${getTransitionDirection(transition)}`;
                   return <button
                     key={transition.id}
                     type="button"
-                    className={`transition-region${selectedClipId === fromClip.id || selectedClipId === toClip.id ? ' is-selected' : ''}`}
-                    style={{ left: Math.max(0, (boundary - transition.duration / 2) * scale), width: Math.max(9, transition.duration * scale) }}
-                    title={`${transition.type.replaceAll('-', ' ')} · ${transition.duration.toFixed(1)} seconds`}
-                    aria-label={`${transition.type.replaceAll('-', ' ')} transition, ${transition.duration.toFixed(1)} seconds`}
+                    draggable={!transitionLocked}
+                    className={`transition-region${selectedTransitionId === transition.id ? ' is-selected' : ''}`}
+                    style={{ left: Math.max(0, range.start * scale), width: Math.max(9, range.duration * scale) }}
+                    title={`${title}. Drag to another compatible clip edge; right-click for options.`}
+                    aria-label={`${title} transition`}
+                    onDragStart={(event) => {
+                      if (transitionLocked) { event.preventDefault(); return; }
+                      event.dataTransfer.setData('application/x-cutline-transition', transition.id);
+                    }}
                     onClick={(event) => {
                       event.stopPropagation();
-                      setSelectedClipId(fromClip.id);
-                      setSelectedAssetId(fromClip.assetId || null);
-                      setPlayhead(boundary);
+                      setSelectedTransitionId(transition.id);
+                      setSelectedClipId(targetClip.id);
+                      setSelectedAssetId(targetClip.assetId || null);
+                      setPlayhead(range.anchor);
                       setLibraryWorkspace('transitions');
                     }}
+                    onContextMenu={(event) => {
+                      setSelectedTransitionId(transition.id);
+                      setSelectedClipId(targetClip.id);
+                      setSelectedAssetId(targetClip.assetId || null);
+                      setPlayhead(range.anchor);
+                      setLibraryWorkspace('transitions');
+                      openContextMenu(event, 'transition', transition.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        setSelectedTransitionId(transition.id);
+                        setSelectedClipId(targetClip.id);
+                        setSelectedAssetId(targetClip.assetId || null);
+                        setPlayhead(range.anchor);
+                        setLibraryWorkspace('transitions');
+                      }
+                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                        setSelectedTransitionId(transition.id);
+                        setSelectedClipId(targetClip.id);
+                        setSelectedAssetId(targetClip.assetId || null);
+                        setPlayhead(range.anchor);
+                        setLibraryWorkspace('transitions');
+                        openKeyboardContextMenu(event, 'transition', transition.id);
+                      }
+                    }}
                     data-testid={`transition-region-${transition.id}`}
-                  ><Sparkles size={10} /></button>;
+                  ><Sparkles size={10} /><span>{transition.type.replaceAll('-', ' ')} · {range.mode}</span></button>;
                 })}
                 <div className="playhead" style={{ left: playhead * scale }} />
               </div>
@@ -4526,6 +4973,42 @@ function Home() {
             {detailsDialog.rows.map(([label, value]) => <div className="details-row" key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
           </dl>
           <div className="dialog-actions"><button className="btn" onClick={() => setDetailsDialog(null)}>Close</button></div>
+        </section>
+      </div>}
+      {transitionDurationDialog && <div
+        className="dialog-backdrop"
+        onMouseDown={(event) => { if (event.target === event.currentTarget) setTransitionDurationDialog(null); }}
+        onKeyDown={(event) => { if (event.key === 'Escape') setTransitionDurationDialog(null); }}
+      >
+        <section className="dialog transition-duration-dialog" role="dialog" aria-modal="true" aria-labelledby="transition-duration-title">
+          <h2 id="transition-duration-title">Edit transition duration</h2>
+          <p>Set a duration from 0.1 to 4 seconds. If the clip is shorter, Cutline limits the transition to the available clip length.</p>
+          <label htmlFor="input-transition-duration-dialog">Duration (seconds)</label>
+          <input
+            id="input-transition-duration-dialog"
+            type="number"
+            min=".1"
+            max="4"
+            step=".05"
+            autoFocus
+            value={transitionDurationDialog.value}
+            onChange={(event) => setTransitionDurationDialog((current) => current ? { ...current, value: event.currentTarget.value } : current)}
+            data-testid="input-transition-duration-dialog"
+          />
+          <div className="dialog-actions">
+            <button className="btn" onClick={() => setTransitionDurationDialog(null)}>Cancel</button>
+            <button className="btn primary" onClick={() => {
+              const transition = project.transitions?.find((item) => item.id === transitionDurationDialog.transitionId);
+              const duration = Number(transitionDurationDialog.value);
+              if (!transition || !Number.isFinite(duration) || duration < .1 || duration > 4) {
+                notify('Enter a transition duration between 0.1 and 4 seconds.', true);
+                return;
+              }
+              setSelectedTransitionId(transition.id);
+              applySelectedTransition(transition.type, duration, getTransitionMode(transition), getTransitionDirection(transition));
+              setTransitionDurationDialog(null);
+            }} data-testid="button-save-transition-duration">Save duration</button>
+          </div>
         </section>
       </div>}
       {pendingMediaRemoval && <div

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Sparkles, Trash2, WandSparkles } from 'lucide-react';
 import { FILTER_PRESETS, type ClipEffects, type ClipFilter, type ClipTransition } from '@/lib/composition';
 
-export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+export type TransitionPresetType = 'fade' | 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+export type TransitionPresetMode = 'entrance' | 'exit' | 'between';
+export type TransitionPresetDirection = 'left' | 'right' | 'up' | 'down';
 
 type Props = {
   workspace: 'effects' | 'transitions' | 'filters';
@@ -10,13 +12,14 @@ type Props = {
   disabledReason?: string;
   onEffects: (effects: Partial<ClipEffects>) => void;
   onFilter: (presetId: string) => void;
-  onTransition: (type: TransitionPresetType, duration: number) => void;
+  onTransition: (type: TransitionPresetType, duration: number, mode: TransitionPresetMode, direction: TransitionPresetDirection) => void;
   onRemoveTransition: () => void;
   hasSelectedTransition?: boolean;
   selectedTransition?: ClipTransition | null;
   selectedEffects?: Partial<ClipEffects>;
   thumbnail?: string;
   canApplyTransition?: boolean;
+  canApplyBetweenTransition?: boolean;
 };
 
 const EFFECTS: Array<{ name: string; description: string; values: Partial<ClipEffects>; sample: string }> = [
@@ -35,6 +38,7 @@ const FILTERS = FILTER_PRESETS.map((preset) => ({
 }));
 
 const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPresetType; sample: string }> = [
+  { name: 'Fade', description: 'Fade a single clip in or out from black.', type: 'fade', sample: 'fade-in' },
   { name: 'Cross dissolve', description: 'Blend adjacent clips with a real two-source dissolve.', type: 'cross-dissolve', sample: 'fade-both' },
   { name: 'Fade through black', description: 'Fade out, pass through black, then fade in.', type: 'fade-through-black', sample: 'fade-out' },
   { name: 'Wipe', description: 'Reveal the next adjacent clip from left to right.', type: 'wipe', sample: 'fade-in' },
@@ -55,12 +59,18 @@ export default function EffectWorkspace({
   selectedEffects,
   thumbnail,
   canApplyTransition = false,
+  canApplyBetweenTransition = false,
 }: Props) {
   const [query, setQuery] = useState('');
   const [duration, setDuration] = useState(.6);
+  const [mode, setMode] = useState<TransitionPresetMode>(selectedTransition?.mode || 'entrance');
+  const [direction, setDirection] = useState<TransitionPresetDirection>(selectedTransition?.direction || 'right');
   useEffect(() => {
-    if (selectedTransition) setDuration(Math.min(4, Math.max(.2, selectedTransition.duration)));
-  }, [selectedTransition?.id, selectedTransition?.duration]);
+    if (!selectedTransition) return;
+    setDuration(Math.min(4, Math.max(.1, selectedTransition.duration)));
+    setMode(selectedTransition.mode || 'between');
+    setDirection(selectedTransition.direction || 'right');
+  }, [selectedTransition?.id, selectedTransition?.duration, selectedTransition?.mode, selectedTransition?.direction]);
   const presets = workspace === 'effects' ? EFFECTS : workspace === 'filters' ? FILTERS : TRANSITIONS;
   const visible = useMemo(
     () => presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())),
@@ -70,7 +80,7 @@ export default function EffectWorkspace({
   const apply = (preset: typeof presets[number]) => {
     if (workspace === 'transitions') {
       const transition = preset as typeof TRANSITIONS[number];
-      onTransition(transition.type, duration);
+      onTransition(transition.type, duration, mode, direction);
     } else if (workspace === 'filters') {
       const filter = preset as typeof FILTERS[number];
       onFilter(filter.id);
@@ -94,9 +104,18 @@ export default function EffectWorkspace({
     ? activeFilters.map((filter) => FILTER_PRESETS.find((preset) => preset.id === filter.presetId)?.name || filter.presetId).join(' + ')
     : 'Original';
   const updateTransitionDuration = (next: number) => {
-    const clamped = Math.min(4, Math.max(.2, next));
+    const clamped = Math.min(4, Math.max(.1, next));
     setDuration(clamped);
-    if (selectedTransition && canApplyTransition) onTransition(selectedTransition.type, clamped);
+    if (selectedTransition) onTransition(selectedTransition.type, clamped, mode, direction);
+  };
+  const modeCanApply = mode === 'between' ? canApplyBetweenTransition : canApplyTransition;
+  const updateMode = (next: TransitionPresetMode) => {
+    setMode(next);
+    if (selectedTransition) onTransition(selectedTransition.type, duration, next, direction);
+  };
+  const updateDirection = (next: TransitionPresetDirection) => {
+    setDirection(next);
+    if (selectedTransition) onTransition(selectedTransition.type, duration, mode, next);
   };
 
   return (
@@ -116,14 +135,31 @@ export default function EffectWorkspace({
       </header>
       <p className="cutline-effect-workspace__note" role={disabled && disabledReason ? 'status' : undefined}>
         {disabled && disabledReason ? disabledReason : workspace === 'transitions'
-          ? canApplyTransition || hasSelectedTransition
-            ? 'A transition is applied between the selected adjacent clips. Choose a preset to replace it.'
-            : 'Select one of two video clips that touch on the same track to enable transitions.'
+          ? hasSelectedTransition
+            ? 'Edit the selected transition here, or choose a preset to replace its effect.'
+            : 'Select a video clip for an entrance or exit. Choose Between clips when two clips touch on the same track.'
           : workspace === 'filters'
             ? 'Choose a preset to add a 5-second filter clip at the playhead. Select it on the Effects track to change its strength and timing.'
             : 'Choose a preset for the selected clip. Adjust the exact values in the Clip Inspector.'}
       </p>
-      {workspace === 'transitions' && <section className="cutline-transition-controls" aria-label="Transition duration">
+      {workspace === 'transitions' && <section className="cutline-transition-controls" aria-label="Transition settings">
+        <div className="cutline-transition-controls__selectors">
+          <label>Apply to
+            <select value={mode} onChange={(event) => updateMode(event.currentTarget.value as TransitionPresetMode)} disabled={disabled} data-testid="select-transition-mode">
+              <option value="entrance">Clip entrance</option>
+              <option value="exit">Clip exit</option>
+              <option value="between">Between clips</option>
+            </select>
+          </label>
+          <label>Direction
+            <select value={direction} onChange={(event) => updateDirection(event.currentTarget.value as TransitionPresetDirection)} disabled={disabled} data-testid="select-transition-direction">
+              <option value="left">From / toward left</option>
+              <option value="right">From / toward right</option>
+              <option value="up">From / toward top</option>
+              <option value="down">From / toward bottom</option>
+            </select>
+          </label>
+        </div>
         <div className="cutline-transition-controls__header">
           <div className="cutline-transition-controls__heading">
             <span>TRANSITION LENGTH</span>
@@ -135,22 +171,22 @@ export default function EffectWorkspace({
           id="input-transition-duration"
           className="cutline-transition-controls__range"
           type="range"
-          min=".2"
+          min=".1"
           max="4"
-          step=".1"
+          step=".05"
           value={duration}
           onChange={(event) => updateTransitionDuration(Number(event.currentTarget.value))}
           aria-label="Transition duration"
-          disabled={!canApplyTransition}
+          disabled={!modeCanApply}
           data-testid="slider-transition-duration"
         />
-        <div className="cutline-transition-controls__scale" aria-hidden="true"><span>0.2 s</span><span>4.0 s</span></div>
+        <div className="cutline-transition-controls__scale" aria-hidden="true"><span>0.1 s</span><span>4.0 s</span></div>
         <div className="cutline-transition-controls__footer">
-          {selectedTransition && canApplyTransition
+          {selectedTransition && modeCanApply
             ? <small className="cutline-transition-controls__applied"><i />Applied · {selectedTransition.type.replaceAll('-', ' ')}</small>
-            : selectedTransition
-              ? <small className="cutline-transition-controls__hint">The clips must touch to use this transition</small>
-              : <small className="cutline-transition-controls__hint">Choose a transition to use this duration</small>}
+            : mode === 'between'
+              ? <small className="cutline-transition-controls__hint">Select two touching video clips for a between-clips transition</small>
+              : <small className="cutline-transition-controls__hint">Select a video clip to add an entrance or exit</small>}
           <button type="button" className="cutline-transition-controls__remove" disabled={!hasSelectedTransition} onClick={onRemoveTransition} data-testid="button-remove-transition">
             <Trash2 size={13} aria-hidden="true" />Remove
           </button>
@@ -185,9 +221,9 @@ export default function EffectWorkspace({
             key={preset.name}
             type="button"
             className="cutline-effect-card"
-            disabled={disabled}
+            disabled={disabled || (workspace === 'transitions' && !modeCanApply)}
             onClick={() => apply(preset)}
-              title={disabled ? disabledReason || `Select a clip to use ${title.toLowerCase()}` : `Apply ${preset.name}`}
+              title={disabled ? disabledReason || `Select a clip to use ${title.toLowerCase()}` : workspace === 'transitions' && !modeCanApply ? 'Select a compatible clip or pair first' : `Apply ${preset.name}`}
             aria-pressed={workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id)}
             data-testid={workspace === 'filters' ? `button-filter-${(preset as typeof FILTERS[number]).id}` : undefined}
           >

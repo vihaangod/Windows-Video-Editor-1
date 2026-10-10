@@ -22,8 +22,9 @@ const desktopBridge = Object.freeze({
     }
     return ipcRenderer.invoke(MEDIA_REMOVAL_CHANNEL, { fileName, clipCount });
   },
-  pickMediaFiles() {
-    return ipcRenderer.invoke(MEDIA_PICK_CHANNEL);
+  pickMediaFiles(kind) {
+    const safeKind = kind === 'video' || kind === 'audio' ? kind : 'all';
+    return ipcRenderer.invoke(MEDIA_PICK_CHANNEL, safeKind);
   },
   releaseMediaFiles(tokens) {
     const safeTokens = Array.isArray(tokens)

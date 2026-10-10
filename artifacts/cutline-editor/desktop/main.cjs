@@ -268,16 +268,23 @@ if (!app.requestSingleInstanceLock()) {
     );
   });
 
-  ipcMain.handle(MEDIA_PICK_CHANNEL, async (event) => {
+  ipcMain.handle(MEDIA_PICK_CHANNEL, async (event, requestedKind) => {
     if (!isTrustedIpcEvent(event)) return [];
 
+    const kind = requestedKind === 'video' || requestedKind === 'audio' ? requestedKind : 'all';
+    const videoExtensions = new Set(['avi', 'm4v', 'mkv', 'mov', 'mp4', 'webm']);
+    const audioExtensions = new Set(['aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav']);
+    const filteredExtensions = MEDIA_EXTENSIONS.filter((extension) =>
+      kind === 'video' ? videoExtensions.has(extension) :
+        kind === 'audio' ? audioExtensions.has(extension) : true,
+    );
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(ownerWindow, {
-      title: 'Import media into Cutline',
+      title: kind === 'video' ? 'Add video clips to Cutline' : kind === 'audio' ? 'Add audio to Cutline' : 'Import media into Cutline',
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Supported media', extensions: MEDIA_EXTENSIONS },
-        { name: 'All files', extensions: ['*'] },
+        { name: kind === 'video' ? 'Video files' : kind === 'audio' ? 'Audio files' : 'Supported media', extensions: filteredExtensions },
+        ...(kind === 'all' ? [{ name: 'All files', extensions: ['*'] }] : []),
       ],
     });
     if (result.canceled) return [];

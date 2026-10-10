@@ -228,6 +228,8 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .track-meta { flex:0 0 198px; position:sticky; left:0; z-index:3; display:flex; align-items:center; gap:3px; padding:0 5px; background:#20242b; border-right:1px solid #363c45; }
 .track-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:#bdc2c8; font-weight:700; }
 .track-meta .icon-btn { width:19px; height:22px; flex:0 0 19px; padding:0; }
+.track-meta .track-upload-control { color:#a4c4c7; border-color:#39484a; background:#252d31; }
+.track-meta .track-upload-control:hover:not(:disabled) { color:#d8f0f0; border-color:#5a7779; background:#2d3a3c; }
 .track-meta .track-order-control,.track-meta .track-delete-control { width:17px; flex-basis:17px; }
 .track-lane { position:relative; flex:1; min-width:500px; background-image:linear-gradient(to right,rgba(133,142,153,.08) 1px,transparent 1px); background-size:80px 100%; }
 .clip { position:absolute; top:7px; height:38px; border-radius:4px; overflow:hidden; display:flex; align-items:center; padding:0 8px; cursor:grab; border:1px solid rgba(255,255,255,.17); color:#f0f1f2; font-size:10px; font-weight:700; min-width:8px; user-select:none; }
@@ -236,9 +238,12 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .clip.video { background:#33747b; }.clip.audio { background:#67558a; }.clip.image { background:#8c6930; }
 .clip.text { background:#84622b; }
 .clip.effect { background:linear-gradient(110deg,#755227,#ba8b3d); border-color:rgba(245,202,111,.55); }
-.transition-region { position:absolute; z-index:1; top:1px; height:12px; display:flex; align-items:center; justify-content:center; padding:0; overflow:hidden; border:1px solid #d4b05b; border-radius:3px; color:#25221b; background:repeating-linear-gradient(135deg,#e6c56b,#e6c56b 4px,#b9994d 4px,#b9994d 8px); cursor:pointer; }
+.track-row--transitions .track-lane { min-width:500px; background-color:#25272c; }
+.transition-region { position:absolute; z-index:1; top:6px; height:22px; display:flex; align-items:center; justify-content:flex-start; gap:4px; padding:0 5px; overflow:hidden; border:1px solid #d4b05b; border-radius:4px; color:#25221b; background:repeating-linear-gradient(135deg,#e6c56b,#e6c56b 5px,#b9994d 5px,#b9994d 10px); cursor:grab; white-space:nowrap; }
+.transition-region:active { cursor:grabbing; }
 .transition-region.is-selected { border-color:#fff0a3; box-shadow:0 0 0 1px #f2bf57; }
 .transition-region svg { width:9px; height:9px; min-width:9px; }
+.transition-region span { overflow:hidden; font-size:8px; font-weight:750; text-overflow:ellipsis; }
 .clip-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-shadow:0 1px 2px rgba(0,0,0,.35); }
 .clip-trim-handle { position:absolute; z-index:1; top:0; bottom:0; width:7px; padding:0; border:0; border-radius:0; background:rgba(12,14,16,.38); cursor:ew-resize; touch-action:none; }
 .clip-trim-handle:hover, .clip-trim-handle:focus-visible { background:#f2bf57; outline:0; }
@@ -503,6 +508,9 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .cutline-filter-workspace__intensity strong { color:#e1e4e8; font-family:var(--app-font-mono); }
 .cutline-filter-workspace__intensity input { width:100%; accent-color:#edb94e; }
 .cutline-transition-controls { display:flex; flex-direction:column; gap:10px; margin:2px 11px 12px; padding:13px 13px 11px; border:1px solid #383d45; border-radius:9px; background:linear-gradient(145deg,#262b33,#20242a); box-shadow:0 5px 16px #00000016; }
+.cutline-transition-controls__selectors { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.cutline-transition-controls__selectors label { display:grid; gap:5px; color:#929ba5; font-size:9px; }
+.cutline-transition-controls__selectors select { min-width:0; height:30px; padding:0 7px; border:1px solid #3c424b; border-radius:5px; color:#dfe2e6; background:#1d2229; font-size:9px; }
 .cutline-transition-controls__header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .cutline-transition-controls__heading { display:flex; min-width:0; flex-direction:column; gap:4px; }
 .cutline-transition-controls__heading > span { color:#89929e; font-size:8px; font-weight:750; letter-spacing:.13em; }

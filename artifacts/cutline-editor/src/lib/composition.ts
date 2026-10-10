@@ -1,3 +1,5 @@
+import { getTransitionDirection, getTransitionMode, getTransitionTargetClipId, getTransitionTimelineRange } from './transition-utils.ts';
+
 export type TrackKind = 'video' | 'audio' | 'text' | 'effects';
 
 export type Track = {
@@ -143,8 +145,12 @@ export type ClipTransition = {
   id: string;
   fromClipId: string;
   toClipId: string;
-  type: 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+  type: 'fade' | 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
   duration: number;
+  /** Omitted on older projects; those transitions are interpreted as between-clip transitions. */
+  mode?: 'entrance' | 'exit' | 'between';
+  direction?: 'left' | 'right' | 'up' | 'down';
+  targetClipId?: string;
 };
 
 export type Asset = {
@@ -688,7 +694,7 @@ function drawMedia(
   time: number,
   project: Project,
   playing: boolean,
-  options: { alpha?: number; sampleTime?: number; offsetX?: number; scaleMultiplier?: number; fade?: boolean } = {},
+  options: { alpha?: number; sampleTime?: number; offsetX?: number; offsetY?: number; scaleMultiplier?: number; fade?: boolean } = {},
 ) {
   const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth || asset.width || 0 : source.naturalWidth || asset.width || 0;
   const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight || asset.height || 0 : source.naturalHeight || asset.height || 0;
@@ -714,7 +720,7 @@ function drawMedia(
   const drawHeight = sourceHeight * fitScale;
 
   context.save();
-  context.translate(project.width / 2 + transform.x + (options.offsetX ?? 0), project.height / 2 + transform.y);
+  context.translate(project.width / 2 + transform.x + (options.offsetX ?? 0), project.height / 2 + transform.y + (options.offsetY ?? 0));
   context.rotate(transform.rotation * Math.PI / 180);
   context.scale(transform.scale * (options.scaleMultiplier ?? 1), transform.scale * (options.scaleMultiplier ?? 1));
   context.globalAlpha *= Math.max(0, Math.min(1, (clip.opacity ?? 1) * (options.fade === false ? 1 : getClipFade(clip, time)) * (options.alpha ?? 1)));
@@ -862,21 +868,24 @@ export function renderProjectFrame(
   }
 
   const activeTransitions = (layer === 'overlay' ? [] : project.transitions || []).flatMap((transition) => {
-    const fromClip = renderIndex
-      ? renderIndex.clipsById.get(transition.fromClipId)
-      : project.clips.find((clip) => clip.id === transition.fromClipId);
-    const toClip = renderIndex
-      ? renderIndex.clipsById.get(transition.toClipId)
-      : project.clips.find((clip) => clip.id === transition.toClipId);
+    const range = getTransitionTimelineRange(project, transition);
+    if (!range || time < range.start || time > range.end) return [];
+    const mode = range.mode;
+    const fromClip = mode === 'between'
+      ? (renderIndex ? renderIndex.clipsById.get(transition.fromClipId) : project.clips.find((clip) => clip.id === transition.fromClipId))
+      : (renderIndex ? renderIndex.clipsById.get(getTransitionTargetClipId(transition)) : project.clips.find((clip) => clip.id === getTransitionTargetClipId(transition)));
+    const toClip = mode === 'between'
+      ? (renderIndex ? renderIndex.clipsById.get(transition.toClipId) : project.clips.find((clip) => clip.id === transition.toClipId))
+      : fromClip;
     if (!fromClip || !toClip) return [];
-    const fromEnd = fromClip.timelineStart + getClipDuration(fromClip);
-    if (Math.abs(fromEnd - toClip.timelineStart) > .05) return [];
-    const boundary = (fromEnd + toClip.timelineStart) / 2;
-    const duration = Math.max(.1, Math.min(4, transition.duration));
-    const start = boundary - duration / 2;
-    const end = boundary + duration / 2;
-    if (time < start || time > end) return [];
-    return [{ transition, fromClip, toClip, boundary, start, end, progress: Math.max(0, Math.min(1, (time - start) / duration)) }];
+    return [{
+      transition,
+      fromClip,
+      toClip,
+      mode,
+      anchor: range.anchor,
+      progress: Math.max(0, Math.min(1, (time - range.start) / range.duration)),
+    }];
   });
   const transitionClipIds = new Set(activeTransitions.flatMap(({ fromClip, toClip }) => [fromClip.id, toClip.id]));
   const transitionForClip = new Map(activeTransitions.flatMap((active) => [[active.fromClip.id, active], [active.toClip.id, active]]));
@@ -898,7 +907,7 @@ export function renderProjectFrame(
       const transitionId = activeTransition.transition.id;
       if (renderedTransitionIds.has(transitionId)) continue;
       renderedTransitionIds.add(transitionId);
-      const { fromClip, toClip, progress, boundary, transition } = activeTransition;
+      const { fromClip, toClip, progress: transitionProgress, anchor, mode, transition } = activeTransition;
        const fromAsset = renderIndex
          ? renderIndex.assetsById.get(fromClip.assetId || '')
          : assets.find((asset) => asset.id === fromClip.assetId);
@@ -908,15 +917,75 @@ export function renderProjectFrame(
       const fromSource = fromClip.assetId ? mediaByAsset.get(fromClip.assetId) : undefined;
       const toSource = toClip.assetId ? mediaByAsset.get(toClip.assetId) : undefined;
       if (!fromAsset || !toAsset || !fromSource || !toSource) continue;
-      const fromSample = Math.min(fromClip.sourceOut, fromClip.sourceIn + Math.max(0, boundary - fromClip.timelineStart) * fromClip.speed);
-      const toSample = Math.max(toClip.sourceIn, toClip.sourceIn + Math.max(0, time - boundary) * toClip.speed);
+      if (mode !== 'between') {
+        const entering = mode === 'entrance';
+        const direction = getTransitionDirection(transition);
+        const directionX = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
+        const directionY = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
+        const sampleTime = Math.max(fromClip.sourceIn, Math.min(
+          fromClip.sourceOut,
+          fromClip.sourceIn + Math.max(0, time - fromClip.timelineStart) * fromClip.speed,
+        ));
+        const progress = entering ? transitionProgress : 1 - transitionProgress;
+        const alpha = transition.type === 'fade' || transition.type === 'cross-dissolve' || transition.type === 'fade-through-black'
+          ? progress
+          : 1;
+        const scaleMultiplier = transition.type === 'zoom'
+          ? entering ? .82 + .18 * progress : 1 - .18 * progress
+          : 1;
+        if (transition.type === 'wipe') {
+          context.save();
+          context.beginPath();
+          if (entering) {
+            if (direction === 'left') context.rect(project.width * (1 - progress), 0, project.width * progress, project.height);
+            else if (direction === 'right') context.rect(0, 0, project.width * progress, project.height);
+            else if (direction === 'up') context.rect(0, 0, project.width, project.height * progress);
+            else context.rect(0, project.height * (1 - progress), project.width, project.height * progress);
+          } else if (direction === 'left') {
+            context.rect(project.width * progress, 0, project.width * (1 - progress), project.height);
+          } else if (direction === 'right') {
+            context.rect(0, 0, project.width * (1 - progress), project.height);
+          } else if (direction === 'up') {
+            context.rect(0, project.height * progress, project.width, project.height * (1 - progress));
+          } else {
+            context.rect(0, 0, project.width, project.height * (1 - progress));
+          }
+          context.clip();
+        }
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
+          sampleTime,
+          fade: false,
+          alpha,
+          offsetX: transition.type === 'slide' ? directionX * project.width * (entering ? 1 - progress : progress) : 0,
+          offsetY: transition.type === 'slide' ? directionY * project.height * (entering ? 1 - progress : progress) : 0,
+          scaleMultiplier,
+        });
+        if (transition.type === 'wipe') context.restore();
+        if (transition.type === 'fade-through-black') {
+          context.save();
+          context.globalAlpha = 1 - progress;
+          context.fillStyle = '#000';
+          context.fillRect(0, 0, project.width, project.height);
+          context.restore();
+        }
+        if (fromClip.assetId) activeAssetIds.add(fromClip.assetId);
+        continue;
+      }
+      const progress = transitionProgress;
+      const fromSample = Math.min(fromClip.sourceOut, fromClip.sourceIn + Math.max(0, anchor - fromClip.timelineStart) * fromClip.speed);
+      const toSample = Math.max(toClip.sourceIn, toClip.sourceIn + Math.max(0, time - anchor) * toClip.speed);
+      const direction = getTransitionDirection(transition);
+      const directionX = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
+      const directionY = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
       if (transition.type === 'wipe' || transition.type === 'slide') {
         drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, fade: false });
         context.save();
-        const revealWidth = project.width * progress;
         if (transition.type === 'wipe') {
           context.beginPath();
-          context.rect(0, 0, revealWidth, project.height);
+          if (direction === 'left') context.rect(project.width * (1 - progress), 0, project.width * progress, project.height);
+          else if (direction === 'right') context.rect(0, 0, project.width * progress, project.height);
+          else if (direction === 'up') context.rect(0, 0, project.width, project.height * progress);
+          else context.rect(0, project.height * (1 - progress), project.width, project.height * progress);
           context.clip();
         } else {
           context.beginPath();
@@ -926,7 +995,8 @@ export function renderProjectFrame(
         drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
           sampleTime: toSample,
           fade: false,
-          offsetX: transition.type === 'slide' ? project.width * (1 - progress) : 0,
+          offsetX: transition.type === 'slide' ? directionX * project.width * (1 - progress) : 0,
+          offsetY: transition.type === 'slide' ? directionY * project.height * (1 - progress) : 0,
         });
         context.restore();
       } else if (transition.type === 'zoom') {

@@ -1,0 +1,19 @@
+Upgrade the existing Cutline video editor. First inspect its timeline, project model, media import, transition engine, preview, export, and browser/Electron file workflows. Preserve the dark-and-gold UI, existing projects, and all working editing features. Implement real behavior—not placeholder UI.
+
+Tracks and uploads
+
+Keep video clips on a dedicated Clips track and audio on separate audio tracks. Leave text, titles, filters, and transitions on their appropriate tracks.
+Add a compact, tooltip-labeled + button to each supported media track. Open a video-only picker on Clips and an audio-only picker on audio tracks; validate formats and explain rejected files.
+Support multiple files, placing them sequentially from the playhead without unintended overlap or replacement. Add media to the current project’s library and timeline; don’t create a project, clear the timeline, or remove the normal Import Media feature.
+Keep media files local. Save track assignments and placements, and preserve browser and secure Electron imports.
+Transitions
+
+Show a dedicated Transitions track while transitions exist; hide it when empty. Support clearly identified entrance, exit, and between-clips transitions.
+Support Fade, Slide, Wipe, Zoom, and Cross Dissolve where appropriate; directional effects must support left, right, up, and down.
+Show transition blocks at their actual timeline positions. Let users select, validly reposition, duplicate, and delete them. Right-clicking a block should offer Edit Duration, Change Transition, Change Direction when applicable, Duplicate, and Delete.
+Provide searchable effect selection and editable duration in seconds. Validate duration and placement, and immediately reflect changes in the timeline, preview, and export.
+Reliability and verification
+
+Keep preview and exported transitions consistent across 16:9, 9:16, 4:5, and 1:1 projects. Keep transitions attached to the correct clips during trimming, splitting, moving, and deletion; safely adjust or flag invalid durations.
+Persist project state and restore it after refresh or reopening the desktop app, while remaining compatible with existing projects.
+Test uploads, invalid files, multiple-file placement, project preservation, transition modes and editing, preview/export consistency, and save/restore. Run available checks and report what passed, failed, or remains incomplete.

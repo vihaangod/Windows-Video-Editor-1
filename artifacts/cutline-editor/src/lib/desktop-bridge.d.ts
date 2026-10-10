@@ -4,7 +4,7 @@ declare global {
   interface Window {
     cutlineDesktop?: {
       confirmMediaRemoval(details: { fileName: string; clipCount: number }): Promise<boolean>;
-      pickMediaFiles(): Promise<Array<{
+      pickMediaFiles(kind?: 'video' | 'audio'): Promise<Array<{
         token: string;
         name: string;
         mimeType: string;
