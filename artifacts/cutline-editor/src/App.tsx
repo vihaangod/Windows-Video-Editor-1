@@ -2,7 +2,7 @@ import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent a
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
-  HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
+  Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
@@ -21,7 +21,7 @@ import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTempl
 import {
   createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type SavedProject, type TextOverlay, type Track, type TrackKind,
+  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type SavedProject, type TextOverlay, type Track, type TrackKind,
 } from '@/lib/composition';
 import { getExportFrameCount, getExportProgress, getExportVideoBitrate } from '@/lib/export-utils';
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
@@ -34,10 +34,12 @@ import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
 const DB_NAME = 'cutline-local-editor-v1';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const LEGACY_STORE = 'projects';
 const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
+const FOLDER_STORE = 'project-folders';
+const MAX_PROJECT_FOLDERS = 10;
 const DEFAULT_TRACKS: Track[] = [
   { id: 'video-1', name: 'Video 1', kind: 'video', order: 0, muted: false, visible: true, locked: false },
   { id: 'audio-1', name: 'Audio 1', kind: 'audio', order: 1, muted: false, visible: true, locked: false },
@@ -108,8 +110,8 @@ const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactN
   { id: 'markup', label: 'Markup', icon: <Pencil size={16} /> },
   { id: 'templates', label: 'Templates', icon: <Grid2X2 size={16} /> },
 ];
-const createProject = (name = 'New Project 1'): Project => ({
-  id: crypto.randomUUID(), name, width: 1920, height: 1080, frameRate: 30,
+const createProject = (name = 'New Project 1', folderId: string | null = null): Project => ({
+  id: crypto.randomUUID(), name, folderId, width: 1920, height: 1080, frameRate: 30,
   tracks: DEFAULT_TRACKS.map((track) => ({ ...track, id: crypto.randomUUID() })), clips: [],
 });
 const nextProjectName = (projects: SavedProject[]) => {
@@ -130,6 +132,7 @@ function openDatabase(): Promise<IDBDatabase> {
       const media = db.objectStoreNames.contains(MEDIA_STORE)
         ? transaction!.objectStore(MEDIA_STORE)
         : db.createObjectStore(MEDIA_STORE, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(FOLDER_STORE)) db.createObjectStore(FOLDER_STORE, { keyPath: 'id' });
       if (!media.indexNames.contains('projectId')) media.createIndex('projectId', 'projectId', { unique: false });
       if (event.oldVersion < 2 && db.objectStoreNames.contains(LEGACY_STORE)) {
         const cursorRequest = transaction!.objectStore(LEGACY_STORE).openCursor();
@@ -182,6 +185,49 @@ async function readLocalProjects(): Promise<SavedProject[]> {
     const req = db.transaction(PROJECT_STORE, 'readonly').objectStore(PROJECT_STORE).getAll();
     req.onsuccess = () => { db.close(); resolve(req.result as SavedProject[]); };
     req.onerror = () => { db.close(); reject(req.error); };
+  });
+}
+async function readLocalFolders(): Promise<ProjectFolder[]> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(FOLDER_STORE, 'readonly').objectStore(FOLDER_STORE).getAll();
+    req.onsuccess = () => { db.close(); resolve(req.result as ProjectFolder[]); };
+    req.onerror = () => { db.close(); reject(req.error); };
+  });
+}
+async function saveLocalFolder(folder: ProjectFolder) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(FOLDER_STORE, 'readwrite');
+    tx.objectStore(FOLDER_STORE).put(folder);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Folder save transaction was aborted.')); };
+  });
+}
+async function deleteLocalFolderAndUnassignProjects(folderId: string) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([PROJECT_STORE, FOLDER_STORE], 'readwrite');
+    const projects = tx.objectStore(PROJECT_STORE);
+    const cursorRequest = projects.openCursor();
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      const record = cursor.value as SavedProject;
+      if (record.project.folderId === folderId) {
+        cursor.update({
+          ...record,
+          project: { ...record.project, folderId: null },
+          savedAt: Date.now(),
+        });
+      }
+      cursor.continue();
+    };
+    tx.objectStore(FOLDER_STORE).delete(folderId);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Folder deletion transaction was aborted.')); };
   });
 }
 async function readLocalMedia(projectId: string): Promise<Asset[]> {
@@ -423,8 +469,17 @@ function Home() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<'project' | 'export' | null>(null);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
   const [projectSearch, setProjectSearch] = useState('');
   const [projectSort, setProjectSort] = useState<'modified' | 'name'>('modified');
+  const [selectedProjectFolder, setSelectedProjectFolder] = useState<'all' | 'unorganized' | string>('all');
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [draftProjectName, setDraftProjectName] = useState('');
+  const [draftProjectFolderId, setDraftProjectFolderId] = useState('unorganized');
+  const [pendingDroppedFiles, setPendingDroppedFiles] = useState<File[]>([]);
+  const [dropProjectId, setDropProjectId] = useState('');
+  const [movingProjectId, setMovingProjectId] = useState<string | null>(null);
+  const [moveFolderId, setMoveFolderId] = useState('unorganized');
   const [projectHydrated, setProjectHydrated] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -445,6 +500,7 @@ function Home() {
   const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
   const [detailsDialog, setDetailsDialog] = useState<{ title: string; rows: Array<[string, string]> } | null>(null);
   const [exportName, setExportName] = useState('cutline-export');
+  const [exportFolderId, setExportFolderId] = useState('unorganized');
   const [format, setFormat] = useState<'mp4' | 'webm'>('mp4');
   const [zoom, setZoom] = useState(1);
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -495,6 +551,7 @@ function Home() {
   const exportCancelRequested = useRef(false);
   const isPlayingRef = useRef(false);
   const projectRef = useRef(project);
+  const projectBackupFileRef = useRef<HTMLInputElement>(null);
   useEffect(() => setCustomCanvas({ width: String(project.width), height: String(project.height) }), [project.width, project.height]);
   useEffect(() => setCustomCanvasMode(false), [project.id]);
   projectRef.current = project;
@@ -567,9 +624,10 @@ function Home() {
     let alive = true;
     void (async () => {
       try {
-        const records = await readLocalProjects();
+        const [records, folders] = await Promise.all([readLocalProjects(), readLocalFolders()]);
         if (!alive) return;
         setSavedProjects(records);
+        setProjectFolders(folders);
         const latest = [...records].sort((a, b) => b.savedAt - a.savedAt)[0];
         if (latest) {
           const localAssets = await readLocalMedia(latest.project.id);
@@ -1071,6 +1129,7 @@ function Home() {
     setMediaImporting(true);
     const targetProjectId = projectRef.current.id;
     const additions: Asset[] = [];
+    let importComplete = false;
     try {
       for (const file of Array.from(files)) {
         if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
@@ -1084,7 +1143,7 @@ function Home() {
       if (additions.length) {
         if (projectRef.current.id !== targetProjectId) {
           notify('The active project changed during import. Select the intended project and retry.', true);
-          return;
+          return false;
         }
         setSaveState('saving');
         try {
@@ -1092,14 +1151,15 @@ function Home() {
         } catch {
           setSaveState('error');
           notify('Could not store imported media in browser storage. Free disk space or remove large files, then retry.', true);
-          return;
+          return false;
         }
         if (projectRef.current.id !== targetProjectId) {
           notify('Media was stored in its original project. Reopen that project to see the imported files.', true);
-          return;
+          return false;
         }
         setAssets((current) => [...current, ...additions]);
         setSelectedAssetId(additions[0].id);
+        importComplete = true;
         const silentVideos = additions.filter((asset) => isVideo(asset) && asset.hasAudio === false);
         const audioNote = silentVideos.length
           ? ` No embedded audio track: ${silentVideos.map((asset) => asset.name).join(', ')}.`
@@ -1109,6 +1169,7 @@ function Home() {
     } finally {
       setMediaImporting(false);
     }
+    return importComplete;
   }, [notify]);
   const addAssetToTimeline = useCallback((asset: Asset, trackId?: string, at = playhead, asAudio = false) => {
     const requestedTrack = trackId ? projectRef.current.tracks.find((track) => track.id === trackId) : undefined;
@@ -1542,8 +1603,87 @@ function Home() {
       notify('Wait for media import to finish before changing projects.', true);
       return;
     }
-    try { setSavedProjects(await readLocalProjects()); setDialog('project'); }
+    try {
+      const [records, folders] = await Promise.all([readLocalProjects(), readLocalFolders()]);
+      setSavedProjects(records);
+      setProjectFolders(folders);
+      setCreatingProject(false);
+      setMovingProjectId(null);
+      setDialog('project');
+    }
     catch { notify('Could not read projects from local browser storage.', true); }
+  };
+  const createProjectFolder = async () => {
+    try {
+      const folders = await readLocalFolders();
+      if (folders.length >= MAX_PROJECT_FOLDERS) {
+        notify('Folder limit reached. Rename or delete a folder before creating another.', true);
+        return null;
+      }
+      const requestedName = window.prompt('Name this internal project folder');
+      if (requestedName === null) return null;
+      const name = requestedName.trim();
+      if (!name || name.length > 48) {
+        notify('Folder names must be between 1 and 48 characters.', true);
+        return null;
+      }
+      if (folders.some((folder) => folder.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        notify('A folder with that name already exists.', true);
+        return null;
+      }
+      const now = Date.now();
+      const folder: ProjectFolder = { id: uid(), name, createdAt: now, updatedAt: now };
+      await saveLocalFolder(folder);
+      const updated = await readLocalFolders();
+      setProjectFolders(updated);
+      notify(`Created internal folder “${name}”.`);
+      return folder;
+    } catch {
+      notify('Could not save this folder in local browser storage.', true);
+      return null;
+    }
+  };
+  const renameProjectFolder = async (folder: ProjectFolder) => {
+    const requestedName = window.prompt('Rename internal project folder', folder.name);
+    if (requestedName === null) return;
+    const name = requestedName.trim();
+    if (!name || name.length > 48) {
+      notify('Folder names must be between 1 and 48 characters.', true);
+      return;
+    }
+    try {
+      const folders = await readLocalFolders();
+      if (folders.some((item) => item.id !== folder.id && item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        notify('A folder with that name already exists.', true);
+        return;
+      }
+      await saveLocalFolder({ ...folder, name, updatedAt: Date.now() });
+      setProjectFolders(await readLocalFolders());
+      notify('Folder renamed.');
+    } catch {
+      notify('Could not rename this folder.', true);
+    }
+  };
+  const deleteProjectFolder = async (folder: ProjectFolder) => {
+    try {
+      const records = await readLocalProjects();
+      const assigned = records.filter((record) => record.project.folderId === folder.id).length;
+      const projectNote = assigned
+        ? ` ${assigned} project${assigned === 1 ? '' : 's'} will be moved to Unorganized Projects; project timelines and media will be kept.`
+        : ' No projects will be affected.';
+      if (!window.confirm(`Delete the internal folder “${folder.name}”?${projectNote}`)) return;
+      await deleteLocalFolderAndUnassignProjects(folder.id);
+      if (projectRef.current.folderId === folder.id) {
+        const updatedProject = { ...projectRef.current, folderId: null };
+        commit(() => updatedProject);
+      }
+      setProjectFolders(await readLocalFolders());
+      setSavedProjects(await readLocalProjects());
+      if (selectedProjectFolder === folder.id) setSelectedProjectFolder('all');
+      notify('Folder deleted. Its projects and media were preserved.');
+    } catch {
+      notify('Could not delete this folder. The projects were not intentionally removed.', true);
+    }
   };
   const flushCurrentProjectSave = async () => {
     if (saveTimer.current !== undefined) {
@@ -1581,10 +1721,10 @@ function Home() {
       notify('Save failed. Check browser storage space and permissions.', true);
     }
   };
-  const openProject = async (record: SavedProject) => {
+  const openProject = async (record: SavedProject): Promise<boolean> => {
     if (mediaImporting) {
       notify('Wait for media import to finish before changing projects.', true);
-      return;
+      return false;
     }
     try {
       await flushCurrentProjectSave();
@@ -1593,16 +1733,20 @@ function Home() {
       const localAssets = await readLocalMedia(latestRecord.project.id);
       setSavedProjects(records);
       history.current = []; future.current = [];
+      projectRef.current = latestRecord.project;
+      assetsRef.current = localAssets;
       setProject(latestRecord.project); setAssets(localAssets); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
       notify(`Opened “${latestRecord.project.name}” from local storage.`);
+      return true;
     } catch {
       notify('Could not save the current project or load the selected project. The current project is still open.', true);
+      return false;
     }
   };
-  const newProject = async () => {
+  const newProject = async (requestedName?: string, folderId: string | null = null): Promise<boolean> => {
     if (mediaImporting) {
       notify('Wait for media import to finish before changing projects.', true);
-      return;
+      return false;
     }
     let records = savedProjects;
     try {
@@ -1610,10 +1754,55 @@ function Home() {
       records = await readLocalProjects();
       setSavedProjects(records);
     } catch {
-      if (!window.confirm('The current project could not be saved locally. Start a new project anyway? Recent changes may be lost.')) return;
+      if (!window.confirm('The current project could not be saved locally. Start a new project anyway? Recent changes may be lost.')) return false;
     }
     history.current = []; future.current = [];
-    setProject(createProject(nextProjectName(records))); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
+    const nextProject = createProject(requestedName?.trim() || nextProjectName(records), folderId);
+    projectRef.current = nextProject;
+    assetsRef.current = [];
+    setProject(nextProject); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0); setDialog(null);
+    return true;
+  };
+  const beginNewProject = () => {
+    const selectedFolderExists = projectFolders.some((folder) => folder.id === selectedProjectFolder);
+    const currentFolderExists = projectFolders.some((folder) => folder.id === project.folderId);
+    const folderId = currentFolderExists
+      ? project.folderId!
+      : selectedFolderExists
+        ? selectedProjectFolder
+        : 'unorganized';
+    setDraftProjectName(nextProjectName(savedProjects));
+    setDraftProjectFolderId(folderId);
+    setCreatingProject(true);
+    setDialog('project');
+  };
+  const createProjectFromForm = async () => {
+    const name = draftProjectName.trim();
+    if (!name || name.length > 100) {
+      notify('Project names must be between 1 and 100 characters.', true);
+      return;
+    }
+    const folderId = draftProjectFolderId === 'unorganized' ? null : draftProjectFolderId;
+    const created = await newProject(name, folderId);
+    setCreatingProject(false);
+    if (created && pendingDroppedFiles.length) {
+      const imported = await importFiles(pendingDroppedFiles);
+      if (imported) setPendingDroppedFiles([]);
+      else setDialog('project');
+    }
+  };
+  const moveSavedProject = async (record: SavedProject, folderId: string | null) => {
+    const updatedProject = { ...record.project, folderId };
+    try {
+      const projectAssets = await readLocalMedia(record.project.id);
+      await persistProjectSnapshot(updatedProject, projectAssets);
+      if (projectRef.current.id === record.project.id) commit(() => updatedProject);
+      setSavedProjects(await readLocalProjects());
+      setMovingProjectId(null);
+      notify(folderId ? `Moved “${record.project.name}” to ${projectFolders.find((folder) => folder.id === folderId)?.name || 'the selected folder'}.` : `Moved “${record.project.name}” to Unorganized Projects.`);
+    } catch {
+      notify('Could not move this project. Its timeline and media are unchanged.', true);
+    }
   };
   const saveProjectAs = async () => {
     const source = projectRef.current;
@@ -1626,6 +1815,7 @@ function Home() {
       ...source,
       id: uid(),
       name,
+      exports: [],
       tracks: source.tracks.map((track) => ({ ...track })),
       clips: source.clips.map((clip) => ({
         ...clip,
@@ -1759,7 +1949,7 @@ function Home() {
     }
   };
   const duplicateSavedProject = async (record: SavedProject) => {
-    const duplicateProject: Project = { ...record.project, id: uid(), name: `${record.project.name} copy` };
+    const duplicateProject: Project = { ...record.project, id: uid(), name: `${record.project.name} copy`, exports: [] };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
       await saveLocalMedia(duplicateProject.id, projectAssets);
@@ -1778,11 +1968,14 @@ function Home() {
       title: 'Project details',
       rows: [
         ['Name', record.project.name],
+        ['Folder', projectFolders.find((folder) => folder.id === record.project.folderId)?.name || 'Unorganized Projects'],
         ['Last saved', new Date(record.savedAt).toLocaleString()],
         ['Media items', String(mediaCount)],
         ['Timeline clips', String(record.project.clips.length)],
         ['Tracks', String(record.project.tracks.length)],
         ['Canvas', `${record.project.width} × ${record.project.height} at ${record.project.frameRate} fps`],
+        ['Recorded exports', String(record.project.exports?.length || 0)],
+        ...((record.project.exports || []).slice(-1).map((item) => ['Latest export', `${item.filename} · ${new Date(item.exportedAt).toLocaleString()}`] as [string, string])),
         ['Project ID', record.project.id],
       ],
     });
@@ -1813,6 +2006,52 @@ function Home() {
       notify('Project backup created.');
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not create the project backup.', true);
+    }
+  };
+  const importProjectBackup = async (file: File) => {
+    const projectId = uid();
+    try {
+      if (file.size > 64 * 1024 * 1024) {
+        throw new Error('Project backups over 64 MB are not imported in the browser to protect memory. Use a smaller backup.');
+      }
+      const payload = JSON.parse(await file.text()) as {
+        schemaVersion?: number;
+        project?: Project;
+        assets?: Array<AssetMetadata & { dataBase64?: string }>;
+      };
+      const source = payload.project;
+      if (
+        payload.schemaVersion !== 1 ||
+        !source ||
+        typeof source.name !== 'string' ||
+        !Array.isArray(source.tracks) ||
+        !Array.isArray(source.clips) ||
+        !Array.isArray(payload.assets) ||
+        !Number.isFinite(source.width) ||
+        !Number.isFinite(source.height) ||
+        !Number.isFinite(source.frameRate)
+      ) {
+        throw new Error('This is not a valid Cutline project backup.');
+      }
+      const importedProject: Project = { ...source, id: projectId, folderId: null };
+      const importedAssets: Asset[] = payload.assets.map((item) => {
+        const { dataBase64, ...metadata } = item;
+        if (!dataBase64 || typeof dataBase64 !== 'string') throw new Error(`Backup media “${item.name}” is missing file data.`);
+        const binary = atob(dataBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let offset = 0; offset < binary.length; offset += 0x8000) {
+          const end = Math.min(binary.length, offset + 0x8000);
+          for (let index = offset; index < end; index += 1) bytes[index] = binary.charCodeAt(index);
+        }
+        return { ...metadata, blob: new Blob([bytes], { type: metadata.mimeType || 'application/octet-stream' }) };
+      });
+      await saveLocalMedia(projectId, importedAssets);
+      await saveLocalProject(importedProject, importedAssets);
+      setSavedProjects(await readLocalProjects());
+      notify(`Imported “${importedProject.name}” into this browser’s project library.`);
+    } catch (error) {
+      try { await deleteLocalProject(projectId); } catch { /* keep the original import error */ }
+      notify(error instanceof Error ? error.message : 'Could not import this project backup.', true);
     }
   };
   const snapTimelineTime = (time: number, ignoreClipId?: string) => {
@@ -2069,17 +2308,30 @@ function Home() {
     );
     const exportBitrate = getExportVideoBitrate(project.width, project.height, project.frameRate);
     const extension = format;
-    const baseName = exportName.trim().replace(/\.(mp4|webm)$/i, '') || 'cutline-export';
+    const requestedBaseName = exportName.trim().replace(/\.(mp4|webm)$/i, '') || 'cutline-export';
+    const usedExportNames = new Set((project.exports || []).map((item) => item.filename.toLocaleLowerCase()));
+    let baseName = requestedBaseName;
+    let suffix = 2;
+    while (usedExportNames.has(`${baseName}.${extension}`.toLocaleLowerCase())) {
+      baseName = `${requestedBaseName}-${suffix}`;
+      suffix += 1;
+    }
+    if (baseName !== requestedBaseName) {
+      setExportName(baseName);
+      notify(`That filename is already in this project’s export history. Using “${baseName}.${extension}”.`);
+    }
     type FileWriteCommand = { type: 'write'; position: number; data: Uint8Array };
     type WritableFile = { write: (chunk: FileWriteCommand) => Promise<void>; close: () => Promise<void>; abort: (reason?: unknown) => Promise<void> };
     type SavePicker = Window & {
       showSaveFilePicker?: (options: {
         suggestedName: string;
         types: Array<{ description: string; accept: Record<string, string[]> }>;
-      }) => Promise<{ createWritable: () => Promise<unknown> }>;
+      }) => Promise<{ createWritable: () => Promise<unknown>; name?: string }>;
     };
     const pickerWindow = window as SavePicker;
-    let fileHandle: { createWritable: () => Promise<unknown> } | null = null;
+    let fileHandle: { createWritable: () => Promise<unknown>; name?: string } | null = null;
+    let renderedByteSize: number | undefined;
+    let outputMessage = '';
     try {
       // Call the picker before awaiting codec detection so the browser still considers it user initiated.
       if (pickerWindow.showSaveFilePicker) {
@@ -2302,6 +2554,7 @@ function Home() {
         const buffer = target.buffer;
         if (!buffer) throw new Error('The encoder finished without producing a file.');
         const blob = new Blob([buffer], { type: format === 'mp4' ? 'video/mp4' : 'video/webm' });
+        renderedByteSize = blob.size;
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
@@ -2310,10 +2563,32 @@ function Home() {
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 30000);
-        notify(`Rendered ${formatBytes(blob.size)} ${extension.toUpperCase()} locally.`);
+        outputMessage = `Rendered ${formatBytes(blob.size)} ${extension.toUpperCase()} locally`;
       } else {
-        notify(`Rendered ${baseName}.${extension} directly to disk.`);
+        outputMessage = `Rendered ${fileHandle?.name || `${baseName}.${extension}`} to the location selected in the browser`;
       }
+      const currentProject = projectRef.current;
+      const filename = fileHandle?.name || `${baseName}.${extension}`;
+      const exportRecord = {
+        id: uid(),
+        filename,
+        format: extension,
+        folderId: exportFolderId === 'unorganized' ? null : exportFolderId,
+        exportedAt: Date.now(),
+        ...(renderedByteSize === undefined ? {} : { byteSize: renderedByteSize }),
+      };
+      const updatedProject: Project = { ...currentProject, exports: [...(currentProject.exports || []), exportRecord] };
+      setProject(updatedProject);
+      try {
+        await persistProjectSnapshot(updatedProject, assetsRef.current);
+        setSavedProjects(await readLocalProjects());
+      } catch {
+        outputMessage += '. The video rendered, but its export history could not be saved';
+      }
+      const destination = exportFolderId === 'unorganized'
+        ? 'Unorganized Projects'
+        : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'the selected internal folder';
+      notify(`${outputMessage}. Recorded under “${destination}” in Cutline. Internal folders organize projects only; the browser chooses the actual save location.`);
       setDialog(null);
     } catch (error) {
       if (exportCancelRequested.current && error instanceof DOMException && error.name === 'AbortError') {
@@ -2352,10 +2627,28 @@ function Home() {
     const query = projectSearch.trim().toLowerCase();
     return savedProjects
       .filter((record) => record.project.name.toLowerCase().includes(query))
+      .filter((record) => selectedProjectFolder === 'all'
+        ? true
+        : selectedProjectFolder === 'unorganized'
+          ? !record.project.folderId
+          : record.project.folderId === selectedProjectFolder)
       .sort((a, b) => projectSort === 'name'
         ? a.project.name.localeCompare(b.project.name)
         : b.savedAt - a.savedAt);
-  }, [savedProjects, projectSearch, projectSort]);
+  }, [savedProjects, projectSearch, projectSort, selectedProjectFolder]);
+  const projectFolderOptions = [
+    { value: 'unorganized', label: 'Unorganized projects' },
+    ...projectFolders.map((folder) => ({ value: folder.id, label: folder.name })),
+  ];
+  const projectDestinationOptions = [
+    ...(!savedProjects.some((record) => record.project.id === project.id)
+      ? [{ value: project.id, label: `${project.name} (Active project)` }]
+      : []),
+    ...savedProjects.map((record) => ({
+      value: record.project.id,
+      label: record.project.id === project.id ? `${project.name} (Active project)` : record.project.name,
+    })),
+  ];
   const contextMenuItems: ContextMenuItem[] = contextMenu?.kind === 'clip' && contextMenuClip ? [
     ...(contextMenuClip.text ? [{
       label: 'Edit Text',
@@ -2473,7 +2766,7 @@ function Home() {
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
         <button className="btn" onClick={openProjects} disabled={mediaImporting} title={mediaImporting ? 'Wait for media import to finish' : 'Manage projects'} aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
-        <button className="btn primary" onClick={() => setDialog('export')} data-testid="button-export"><Download size={14} /><span>Export</span></button>
+        <button className="btn primary" onClick={() => { setExportFolderId(project.folderId || 'unorganized'); setDialog('export'); }} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
       <section className="editor-body">
         <nav className="workspace-rail" aria-label="Editing workspaces">
@@ -2663,6 +2956,29 @@ function Home() {
                 onDoubleClick={() => document.querySelector<HTMLElement>('[data-testid="input-title-content"]')?.focus()}
                 data-testid="canvas-video-preview"
               />
+              {project.clips.length === 0 && assets.length === 0 && <div
+                className="project-welcome"
+                onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDropActive(false);
+                  if (event.dataTransfer.files.length) {
+                    setPendingDroppedFiles(Array.from(event.dataTransfer.files));
+                    setDropProjectId(projectRef.current.id);
+                    setDialog('project');
+                  }
+                }}
+              >
+                <span className="project-welcome__icon"><Clapperboard size={24} /></span>
+                <h3>Drop your first clip here</h3>
+                <p>Media you drop is added to “{project.name}”. Open a saved project to keep editing its existing timeline.</p>
+                <div>
+                  <button type="button" className="btn primary" onClick={beginNewProject}><FilePlus2 size={14} />New project</button>
+                  <button type="button" className="btn" onClick={() => void openProjects()}><FolderOpen size={14} />Browse projects</button>
+                  <button type="button" className="btn" onClick={() => fileInput.current?.click()}><Upload size={14} />Choose media</button>
+                </div>
+              </div>}
               {!activeVisualClips.length && <div className="preview-empty"><Clapperboard size={27} strokeWidth={1.25} /><strong>Your cut starts here</strong><span>Import media, then add it to a track</span></div>}
               {audioClips.map((clip) => (
                 <audio
@@ -2852,12 +3168,73 @@ function Home() {
         </div>
       </section>
       {notice && <div className={`notice ${notice.error ? 'error' : ''}`} role="status" data-testid="status-notice">{notice.error ? <CircleAlert size={16} /> : <Check size={16} />}{notice.message}</div>}
-      {dialog === 'project' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null); }}>
+      {dialog === 'project' && <div
+        className="dialog-backdrop"
+        onMouseDown={(event) => { if (event.target === event.currentTarget) { setCreatingProject(false); setMovingProjectId(null); setDialog(null); } }}
+        onKeyDown={(event) => { if (event.key === 'Escape') { setCreatingProject(false); setMovingProjectId(null); setDialog(null); } }}
+      >
         <section className="dialog project-library" role="dialog" aria-modal="true" aria-label="Local projects">
-          <h2>Projects on this device</h2><p>Your project files and imported media are stored in this browser only.</p>
+          <div className="project-library__heading">
+            <div><h2>Projects on this device</h2><p>Projects and imported media stay in this browser. Folders organize projects here; they are not computer folders.</p></div>
+          </div>
           <div className="project-library__actions">
-            <button className="btn primary" onClick={() => void newProject()} data-testid="button-new-project"><FilePlus2 size={14} />New project</button>
+            <button className="btn primary" onClick={beginNewProject} data-testid="button-new-project"><FilePlus2 size={14} />New project</button>
             <button className="btn" onClick={() => void saveProjectAs()} data-testid="button-save-project-as"><Copy size={14} />Save As</button>
+            <button className="btn" onClick={() => void createProjectFolder()} disabled={projectFolders.length >= MAX_PROJECT_FOLDERS} title={projectFolders.length >= MAX_PROJECT_FOLDERS ? 'Rename or delete an existing folder before creating another.' : 'Create an internal project folder'} data-testid="button-create-folder"><FolderOpen size={14} />Create folder</button>
+            <input
+              ref={projectBackupFileRef}
+              className="visually-hidden"
+              type="file"
+              accept=".cutline.json,application/json"
+              aria-label="Upload a Cutline project backup"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) void importProjectBackup(file);
+                event.currentTarget.value = '';
+              }}
+            />
+            <button className="btn" onClick={() => projectBackupFileRef.current?.click()} data-testid="button-import-project"><Upload size={14} />Import backup</button>
+          </div>
+          {pendingDroppedFiles.length > 0 && <div className="project-library__drop-choice">
+            <strong>{pendingDroppedFiles.length} dropped file{pendingDroppedFiles.length === 1 ? '' : 's'} waiting for a project</strong>
+            <p>Nothing has been imported yet. Choose a destination or create a new project; these files will stay queued until you decide.</p>
+            <label>Import into<CutlineSelect aria-label="Choose project for dropped files" value={dropProjectId || project.id} options={projectDestinationOptions} onValueChange={setDropProjectId} data-testid="select-drop-project-destination" /></label>
+            <div>
+              <button className="btn" type="button" onClick={beginNewProject}><FilePlus2 size={13} />Create project</button>
+              <button className="btn" type="button" onClick={() => setPendingDroppedFiles([])}>Discard queued files</button>
+              <button className="btn primary" type="button" disabled={mediaImporting} onClick={async () => {
+                const targetId = dropProjectId || project.id;
+                const targetRecord = savedProjects.find((record) => record.project.id === targetId);
+                if (targetId !== projectRef.current.id) {
+                  if (!targetRecord || !await openProject(targetRecord)) return;
+                }
+                const imported = await importFiles(pendingDroppedFiles);
+                if (imported) {
+                  setPendingDroppedFiles([]);
+                  setDialog(null);
+                } else setDialog('project');
+              }}><Upload size={13} />Import into project</button>
+            </div>
+          </div>}
+          {projectFolders.length >= MAX_PROJECT_FOLDERS && <p className="project-library__limit" role="status">Folder limit reached (10). Rename or delete a folder before creating another.</p>}
+          {creatingProject && <form className="project-library__new-form" onSubmit={(event) => { event.preventDefault(); createProjectFromForm(); }}>
+            <label>Project name<input autoFocus value={draftProjectName} onChange={(event) => setDraftProjectName(event.currentTarget.value)} maxLength={100} data-testid="input-new-project-name" /></label>
+            <label>Save in folder<CutlineSelect aria-label="Project folder" value={draftProjectFolderId} options={projectFolderOptions} onValueChange={setDraftProjectFolderId} data-testid="select-new-project-folder" /></label>
+            <div className="project-library__new-actions">
+              <button type="button" className="btn" onClick={() => setCreatingProject(false)}>Cancel</button>
+              <button type="submit" className="btn primary"><FilePlus2 size={13} />Create project</button>
+            </div>
+          </form>}
+          <div className="project-library__folder-strip" aria-label="Project folders">
+            <button type="button" className={selectedProjectFolder === 'all' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('all')}><FolderOpen size={13} />All projects <span>{savedProjects.length}</span></button>
+            <button type="button" className={selectedProjectFolder === 'unorganized' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('unorganized')}><Folder size={13} />Unorganized <span>{savedProjects.filter((record) => !record.project.folderId).length}</span></button>
+            {projectFolders.map((folder) => <div className={`project-library__folder-chip${selectedProjectFolder === folder.id ? ' is-selected' : ''}`} key={folder.id}>
+              <button type="button" className="project-library__folder-select" onClick={() => setSelectedProjectFolder(folder.id)} aria-pressed={selectedProjectFolder === folder.id}>
+                <Folder size={13} /><span>{folder.name}</span><small>{savedProjects.filter((record) => record.project.folderId === folder.id).length}</small>
+              </button>
+              <button type="button" className="project-library__folder-action" title={`Rename ${folder.name}`} aria-label={`Rename folder ${folder.name}`} onClick={() => void renameProjectFolder(folder)}><Pencil size={12} /></button>
+              <button type="button" className="project-library__folder-action is-delete" title={`Delete ${folder.name}`} aria-label={`Delete folder ${folder.name}`} onClick={() => void deleteProjectFolder(folder)}><Trash2 size={12} /></button>
+            </div>)}
           </div>
           <div className="project-library__tools">
             <label className="search-box"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>
@@ -2877,6 +3254,9 @@ function Home() {
               const isCurrent = record.project.id === project.id;
               const currentProject = record.project.id === project.id ? project : record.project;
               const currentStatus = record.project.id === project.id ? saveState : 'saved';
+              const firstMediaClip = currentProject.clips.find((clip) => clip.assetId);
+              const thumbnail = record.assets.find((asset) => asset.id === firstMediaClip?.assetId && asset.thumbnail)?.thumbnail;
+              const assignedFolder = projectFolders.find((folder) => folder.id === currentProject.folderId)?.name || 'Unorganized';
               return <article
                 key={record.project.id}
                 className={`project-library__row${isCurrent ? ' is-current' : ''}`}
@@ -2887,25 +3267,33 @@ function Home() {
                 aria-label={`Project ${currentProject.name}${isCurrent ? ', active project' : ''}`}
                 data-testid={`row-project-${record.project.id}`}
               >
-                <span className="project-library__icon"><Clapperboard size={16} /></span>
+                <span className="project-library__icon">{thumbnail ? <img src={thumbnail} alt="" /> : <Clapperboard size={16} />}</span>
                 <div className="project-library__details">
                   <div className="project-library__name-row">
                     <button type="button" className="project-library__open" onClick={() => void openProject(record)} data-testid={`button-open-saved-${record.project.id}`}>{currentProject.name}</button>
                     {isCurrent && <span className="project-library__active-label">Active project</span>}
                   </div>
-                  <span>{new Date(record.savedAt).toLocaleString()} · {currentProject.width} × {currentProject.height} · {currentProject.frameRate} fps · {currentProject.clips.length} clips</span>
+                  <span>{assignedFolder} · {new Date(record.savedAt).toLocaleString()} · {currentProject.width} × {currentProject.height} · {currentProject.frameRate} fps · {currentProject.clips.length} clips</span>
                   <small className={`project-library__status project-library__status--${currentStatus}`}><i />{currentStatus === 'saved' ? 'Saved' : currentStatus === 'saving' ? 'Saving…' : currentStatus === 'dirty' ? 'Unsaved changes' : 'Save failed'}</small>
                 </div>
                 <div className="project-library__row-actions">
+                  <button type="button" title="Move project" aria-label={`Move ${currentProject.name}`} onClick={() => { setMovingProjectId(record.project.id); setMoveFolderId(currentProject.folderId || 'unorganized'); }}><FolderInput size={13} /></button>
                   <button type="button" title="Open project" aria-label={`Open ${currentProject.name}`} onClick={() => void openProject(record)}><FolderOpen size={13} /></button>
                   <button type="button" title="Rename project" aria-label={`Rename ${currentProject.name}`} onClick={() => void renameSavedProject(record)}><Pencil size={13} /></button>
                   <button type="button" title="Duplicate project" aria-label={`Duplicate ${currentProject.name}`} onClick={() => void duplicateSavedProject(record)}><Copy size={13} /></button>
                   <button type="button" title="Delete project" aria-label={`Delete ${currentProject.name}`} onClick={() => void deleteSavedProject(record)}><Trash2 size={13} /></button>
                 </div>
               </article>;
-            }) : <div className="project-library__empty">{savedProjects.length ? 'No projects match your search.' : 'No saved projects yet. The current project autosaves locally.'}</div>}
+            }) : <div className="project-library__empty">{savedProjects.length ? projectSearch ? 'No projects match your search.' : 'No projects in this folder yet.' : 'No saved projects yet. Create one or import a project backup.'}</div>}
           </div>
-          <div className="dialog-actions"><button className="btn" onClick={() => setDialog(null)} data-testid="button-close-projects">Close</button></div>
+          {movingProjectId && <div className="project-library__move-form">
+            <label>Move “{savedProjects.find((record) => record.project.id === movingProjectId)?.project.name || 'project'}” to<CutlineSelect aria-label="Move project to folder" value={moveFolderId} options={projectFolderOptions} onValueChange={setMoveFolderId} data-testid="select-move-project-folder" /></label>
+            <div><button type="button" className="btn" onClick={() => setMovingProjectId(null)}>Cancel</button><button type="button" className="btn primary" onClick={() => {
+              const record = savedProjects.find((item) => item.project.id === movingProjectId);
+              if (record) void moveSavedProject(record, moveFolderId === 'unorganized' ? null : moveFolderId);
+            }}>Move project</button></div>
+          </div>}
+          <div className="dialog-actions"><button className="btn" onClick={() => { setCreatingProject(false); setMovingProjectId(null); setDialog(null); }} data-testid="button-close-projects">Close</button></div>
         </section>
       </div>}
       {detailsDialog && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsDialog(null); }} onKeyDown={(event) => { if (event.key === 'Escape') setDetailsDialog(null); }}>
@@ -2920,7 +3308,29 @@ function Home() {
       {dialog === 'export' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !exporting) setDialog(null); }}>
         <section className="dialog" aria-label="Export project">
           <h2>Export your cut</h2><p>Rendered on this device with WebCodecs. Cutline checks the selected browser encoders before rendering; no FFmpeg engine or cloud service is used.</p>
+          <div className="export-project-meta"><strong>Project:</strong> {project.name}</div>
           <label htmlFor="export-name">File name</label><input id="export-name" value={exportName} onChange={(event) => setExportName(event.target.value)} disabled={exporting} data-testid="input-export-name" />
+          <label>Record export under</label>
+          <div className="export-folder-control">
+            <CutlineSelect
+              aria-label="Export project folder"
+              value={exportFolderId}
+              options={projectFolderOptions}
+              onValueChange={setExportFolderId}
+              disabled={exporting}
+              data-testid="select-export-folder"
+            />
+            <button className="btn" type="button" disabled={exporting || projectFolders.length >= MAX_PROJECT_FOLDERS} onClick={async () => {
+              const folder = await createProjectFolder();
+              if (folder) setExportFolderId(folder.id);
+            }} title={projectFolders.length >= MAX_PROJECT_FOLDERS ? 'Rename or delete a folder before creating another.' : 'Create an internal folder'}>
+              <FolderOpen size={13} />Create folder
+            </button>
+          </div>
+          <p className="export-location-note">
+            {exportFolderId === 'unorganized' ? 'Unorganized Projects' : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'Selected internal folder'} is a Cutline library label, not a Windows folder. The browser download uses Downloads unless you choose a location in its save picker.
+            {projectFolders.length >= MAX_PROJECT_FOLDERS ? ' Folder creation is unavailable because the 10-folder limit is reached.' : ''}
+          </p>
           <label htmlFor="export-format">Format</label>
           <CutlineSelect
             id="export-format"
@@ -2933,7 +3343,7 @@ function Home() {
             disabled={exporting}
             data-testid="select-export-format"
           />
-          <p style={{ marginBottom: 0 }}>Output: {project.width} × {project.height} at {project.frameRate} fps. Large renders stream to disk when File System Access is available. Without it, the in-memory fallback is limited to 30 seconds and an estimated 64 MB.</p>
+          <p style={{ marginBottom: 0 }}>Output: {project.width} × {project.height} at {project.frameRate} fps. Large renders stream to the browser-selected file when File System Access is available. Without it, the download fallback is limited to 30 seconds and an estimated 64 MB. The internal destination will not move this project.</p>
           {exporting && <>
             <div className="export-progress-meta"><span>Elapsed {formatElapsedTime(exportElapsed)}</span><span>{exportProgress}%</span></div>
             <div className="progress-track" role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={exportProgress}><span style={{ width: `${exportProgress}%` }} /></div>

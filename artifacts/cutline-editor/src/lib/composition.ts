@@ -120,6 +120,7 @@ export type Clip = {
 export type Project = {
   id: string;
   name: string;
+  folderId?: string | null;
   width: number;
   height: number;
   frameRate: number;
@@ -128,6 +129,7 @@ export type Project = {
   transitions?: ClipTransition[];
   removedAssetIds?: string[];
   markups?: MarkupDrawing[];
+  exports?: ProjectExport[];
 };
 
 export type ClipTransition = {
@@ -182,6 +184,15 @@ export function shouldDeferPreviewVideoFrame(readyState: number, seeking: boolea
     Math.abs(currentTime - targetTime) > .32;
 }
 
+export type ProjectFolder = { id: string; name: string; createdAt: number; updatedAt: number };
+export type ProjectExport = {
+  id: string;
+  filename: string;
+  format: 'mp4' | 'webm';
+  folderId: string | null;
+  exportedAt: number;
+  byteSize?: number;
+};
 export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
 
 export const DEFAULT_TRANSFORM: ClipTransform = {
