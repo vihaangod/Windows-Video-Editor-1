@@ -1,5 +1,6 @@
 import './inspector-panel.css';
 import CutlineSelect from '@/components/CutlineSelect';
+import CutlineColorPicker from '@/components/CutlineColorPicker';
 import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextBackgroundStyle, type TextOverlay } from '@/lib/composition';
 
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
@@ -320,10 +321,17 @@ export default function InspectorPanel({
           </label>
         </div>
         <div className="cutline-inspector__fields">
-          <label className="cutline-inspector__field" htmlFor={`input-title-color-${clip.id}`}>
+          <div className="cutline-inspector__field">
             <span className="cutline-inspector__field-label">Text color</span>
-            <input id={`input-title-color-${clip.id}`} className="cutline-inspector__color" type="color" value={/^#[0-9a-f]{6}$/i.test(clip.text.color) ? clip.text.color : '#ffffff'} disabled={disabled} data-testid="input-title-color" onChange={(event) => onChange({ text: { color: event.currentTarget.value } })} />
-          </label>
+            <CutlineColorPicker
+              className="cutline-inspector__color"
+              label="Text color"
+              value={/^#[0-9a-f]{6}$/i.test(clip.text.color) ? clip.text.color : '#ffffff'}
+              disabled={disabled}
+              testId="input-title-color"
+              onChange={(color) => onChange({ text: { color } })}
+            />
+          </div>
           <label className="cutline-inspector__field" htmlFor={`select-title-align-${clip.id}`}>
             <span className="cutline-inspector__field-label">Alignment</span>
             <CutlineSelect

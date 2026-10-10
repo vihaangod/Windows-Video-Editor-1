@@ -1987,7 +1987,7 @@ function Home() {
       const editing = target instanceof HTMLElement && (
         target.isContentEditable ||
         target.matches('input, textarea, select') ||
-        target.closest('[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [data-radix-popper-content-wrapper]')
+        target.closest('[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [role="dialog"], [data-radix-popper-content-wrapper]')
       );
       if (editing) return;
       if (contextMenu) return;

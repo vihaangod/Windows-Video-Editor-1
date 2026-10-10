@@ -376,7 +376,6 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .cutline-markup__settings { min-height:0; overflow:auto; padding:6px 12px 8px; }
 .cutline-markup__color-field,.cutline-markup__field { display:flex; flex-direction:column; gap:6px; margin-top:9px; color:#9da4ad; font-size:9px; }
 .cutline-markup__color-row { display:flex; min-height:30px; align-items:center; gap:7px; }
-.cutline-markup__color-row input[type=color] { width:37px; height:29px; padding:3px; border:1px solid #414852; border-radius:4px; background:#252a32; }
 .cutline-markup__color-row input[type=text],.cutline-markup__field input[type=text] { width:100%; min-width:0; height:29px; padding:0 7px; color:#e0e3e7; border:1px solid #39404a; border-radius:4px; background:#252a32; font:10px var(--app-font-mono); }
 .cutline-markup__field .cutline-select-trigger { width:100%; min-height:29px; height:29px; font:10px var(--app-font-mono); }
 .cutline-markup__color-row input[type=range] { flex:1; min-width:0; accent-color:#edb94e; }

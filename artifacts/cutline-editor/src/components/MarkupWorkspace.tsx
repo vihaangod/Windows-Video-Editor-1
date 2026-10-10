@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { MarkupDrawing, MarkupTool } from '@/lib/composition';
 import CutlineSelect from '@/components/CutlineSelect';
+import CutlineColorPicker from '@/components/CutlineColorPicker';
 
 type Props = {
   tool: MarkupTool | 'eraser';
@@ -80,28 +81,37 @@ export default function MarkupWorkspace(props: Props) {
       </div>
 
       <div className="cutline-markup__settings">
-        <label className="cutline-markup__color-field">
+        <div className="cutline-markup__color-field">
           <span>Stroke color</span>
           <span className="cutline-markup__color-row">
-            <input type="color" value={props.color} onChange={(event) => props.onColor(event.currentTarget.value)} aria-label="Stroke color picker" data-testid="input-markup-color" />
-            <input type="text" value={props.color.toUpperCase()} maxLength={7} aria-label="Stroke color hex" data-testid="input-markup-hex" onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (/^#[0-9a-fA-F]{6}$/.test(value)) props.onColor(value);
-            }} />
+            <CutlineColorPicker
+              className="cutline-markup__color-picker"
+              label="Stroke color"
+              value={props.color}
+              testId="input-markup-color"
+              hexInputTestId="input-markup-hex"
+              onChange={props.onColor}
+            />
           </span>
-        </label>
+        </div>
         <div className="cutline-markup__swatches" aria-label="Recent markup colors">
-          {['#ff3b30', '#ffd60a', '#32d74b', '#0a84ff', '#ffffff', '#ff00ff'].map((swatch) => (
+          {['#f9b643', '#ff3b30', '#ffd60a', '#32d74b', '#0a84ff', '#ffffff', '#ff00ff'].map((swatch) => (
             <button type="button" key={swatch} style={{ background: swatch }} aria-label={`Use ${swatch} stroke color`} title={swatch} onClick={() => props.onColor(swatch)} />
           ))}
         </div>
-        <label className="cutline-markup__color-field">
+        <div className="cutline-markup__color-field">
           <span>Shape fill</span>
           <span className="cutline-markup__color-row">
-            <input type="color" value={props.fillColor} onChange={(event) => props.onFillColor(event.currentTarget.value)} aria-label="Shape fill color" data-testid="input-markup-fill-color" />
+            <CutlineColorPicker
+              className="cutline-markup__color-picker"
+              label="Shape fill"
+              value={props.fillColor}
+              testId="input-markup-fill-color"
+              onChange={props.onFillColor}
+            />
             <input type="range" min="0" max="80" step="1" value={props.fillOpacity} onChange={(event) => props.onFillOpacity(Number(event.currentTarget.value))} aria-label="Shape fill opacity" data-testid="slider-markup-fill-opacity" />
           </span>
-        </label>
+        </div>
 
         {props.tool === 'text' && <label className="cutline-markup__field">
           <span>Note text</span>
