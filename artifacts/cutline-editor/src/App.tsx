@@ -967,7 +967,7 @@ function Home() {
     if (!wrap) return;
     const updateFrameSize = () => {
       const ratio = project.width / Math.max(1, project.height);
-      const width = Math.max(0, Math.min(wrap.clientWidth * .94, 1320, (wrap.clientHeight - 30) * ratio));
+      const width = Math.max(0, Math.min(wrap.clientWidth - 12, 1320, (wrap.clientHeight - 12) * ratio));
       setPreviewFrameSize({ width, height: width / ratio });
     };
     const observer = new ResizeObserver(updateFrameSize);
@@ -3329,7 +3329,7 @@ function Home() {
                 data-testid="canvas-video-preview"
               />
               {project.clips.length === 0 && assets.length === 0 && <div
-                className="project-welcome"
+                className={`project-welcome${project.width / project.height <= 0.8 ? ' project-welcome--portrait' : ''}`}
                 onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); }}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -3344,7 +3344,9 @@ function Home() {
               >
                 <span className="project-welcome__icon"><Clapperboard size={24} /></span>
                 <h3>Drop your first clip here</h3>
-                <p>Drop media here to choose a project destination. Open a saved project to continue its timeline, or create a new one.</p>
+                <p>{project.width / project.height <= 0.8
+                  ? 'Add media, then add it to your timeline.'
+                  : 'Drop media here to choose a project destination. Open a saved project to continue its timeline, or create a new one.'}</p>
                 <div>
                   <button type="button" className="btn primary" onClick={beginNewProject}><FilePlus2 size={14} />New project</button>
                   <button type="button" className="btn" onClick={() => void openProjects()}><FolderOpen size={14} />Browse projects</button>
