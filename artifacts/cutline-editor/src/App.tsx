@@ -2,9 +2,9 @@ import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent a
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen,
-  Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
+  Cloud, CloudUpload, Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
-  Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
+  Trash2, Type, Undo2, UnlockKeyhole, Upload, UserRound, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
 import {
   ALL_FORMATS, BlobSource, BufferTarget, CanvasSource, Input, MediaStreamAudioTrackSource, Mp4OutputFormat,
@@ -32,6 +32,10 @@ import {
 } from '@/lib/export-utils';
 import { getProjectFolderNameError, getProjectNameError, MAX_PROJECT_FOLDERS } from '@/lib/project-library-utils';
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
+import { cloudMediaReferencesMatch, hashCloudEditorState, makeCloudEditorState, type CloudProjectLink } from '@/lib/cloud-projects';
+import { useCutlineCloud } from '@/hooks/use-cutline-cloud';
+import SupabaseAccountDialog from '@/components/SupabaseAccountDialog';
+import { supabaseClient, supabaseConfigurationError } from '@/lib/supabase';
 import cutlineAppIcon from '@/assets/cutline-app-icon.svg';
 import {
   adjustTimelineZoom, formatTimelineTick, getPlaybackDeltaSeconds, getTimelineEnd, getTimelineRuler,
@@ -41,7 +45,7 @@ import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
 const DB_NAME = 'cutline-local-editor-v1';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const EXPANDED_PROJECT_FOLDERS_KEY = 'cutline-project-library-expanded-folders-v1';
 const LAST_ACTIVE_PROJECT_KEY = 'cutline-last-active-project-v1';
 const LEGACY_STORE = 'projects';
@@ -49,6 +53,7 @@ const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
 const MEDIA_BLOB_STORE = 'media-blobs';
 const FOLDER_STORE = 'project-folders';
+const CLOUD_LINK_STORE = 'cloud-project-links';
 type StoredMediaRecord = { key: string; projectId: string; asset: AssetMetadata; blobId: string };
 type StoredMediaBlob = { id: string; blob: Blob };
 type WritableFile = {
@@ -193,6 +198,7 @@ function openDatabase(): Promise<IDBDatabase> {
         ? transaction!.objectStore(MEDIA_BLOB_STORE)
         : db.createObjectStore(MEDIA_BLOB_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(FOLDER_STORE)) db.createObjectStore(FOLDER_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(CLOUD_LINK_STORE)) db.createObjectStore(CLOUD_LINK_STORE, { keyPath: 'projectId' });
       if (!media.indexNames.contains('projectId')) media.createIndex('projectId', 'projectId', { unique: false });
       if (!media.indexNames.contains('blobId')) media.createIndex('blobId', 'blobId', { unique: false });
       if (event.oldVersion < 4) {
@@ -234,21 +240,43 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error);
   });
 }
+function makeSavedAssetMetadata(
+  project: Project,
+  assets: Asset[],
+  existing: AssetMetadata[] = [],
+  additional: AssetMetadata[] = [],
+): AssetMetadata[] {
+  const physicalIds = new Set(assets.map((asset) => asset.id));
+  const referencedIds = new Set(project.clips.flatMap((clip) => clip.assetId ? [clip.assetId] : []));
+  const metadata = new Map<string, AssetMetadata>();
+  for (const asset of existing) {
+    if (referencedIds.has(asset.id) && !physicalIds.has(asset.id)) metadata.set(asset.id, asset);
+  }
+  for (const asset of additional) metadata.set(asset.id, asset);
+  for (const { blob: _blob, ...asset } of assets) metadata.set(asset.id, asset);
+  return [...metadata.values()];
+}
 async function saveLocalProject(
   project: Project,
   assets: Asset[],
   selection: ProjectSelection = { clipId: null, assetId: null },
+  additionalAssetMetadata: AssetMetadata[] = [],
 ) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(PROJECT_STORE, 'readwrite');
-    const metadata: SavedProject = {
-      project,
-      assets: assets.map(({ blob: _blob, ...asset }) => asset),
-      savedAt: Date.now(),
-      selection,
+    const store = tx.objectStore(PROJECT_STORE);
+    const existingRequest = store.get(project.id);
+    existingRequest.onsuccess = () => {
+      const existing = existingRequest.result as SavedProject | undefined;
+      const metadata: SavedProject = {
+        project,
+        assets: makeSavedAssetMetadata(project, assets, existing?.assets, additionalAssetMetadata),
+        savedAt: Date.now(),
+        selection,
+      };
+      store.put(metadata);
     };
-    tx.objectStore(PROJECT_STORE).put(metadata);
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
     tx.onabort = () => { db.close(); reject(tx.error || new Error('Project save transaction was aborted.')); };
@@ -328,6 +356,26 @@ async function copyLocalMedia(sourceProjectId: string, destinationProjectId: str
     tx.onabort = () => { db.close(); reject(tx.error || new Error('Media references could not be copied.')); };
   });
 }
+async function deleteLocalMediaForProject(projectId: string) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
+    const media = tx.objectStore(MEDIA_STORE);
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    const recordsRequest = media.index('projectId').getAll(projectId);
+    recordsRequest.onsuccess = () => {
+      const records = recordsRequest.result as StoredMediaRecord[];
+      for (const record of records) media.delete(record.key);
+      for (const blobId of new Set(records.map((record) => record.blobId).filter((id): id is string => Boolean(id)))) {
+        const count = media.index('blobId').count(blobId);
+        count.onsuccess = () => { if (count.result === 0) blobs.delete(blobId); };
+      }
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Local media references could not be safely separated.')); };
+  });
+}
 async function copyLocalMediaAsset(
   sourceProjectId: string,
   sourceAssetId: string,
@@ -360,6 +408,40 @@ async function readLocalProjects(): Promise<SavedProject[]> {
     const req = db.transaction(PROJECT_STORE, 'readonly').objectStore(PROJECT_STORE).getAll();
     req.onsuccess = () => { db.close(); resolve(req.result as SavedProject[]); };
     req.onerror = () => { db.close(); reject(req.error); };
+  });
+}
+async function readLocalProject(projectId: string): Promise<SavedProject | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(PROJECT_STORE, 'readonly').objectStore(PROJECT_STORE).get(projectId);
+    request.onsuccess = () => { db.close(); resolve((request.result as SavedProject | undefined) || null); };
+    request.onerror = () => { db.close(); reject(request.error); };
+  });
+}
+async function readLocalCloudLinks(): Promise<CloudProjectLink[]> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(CLOUD_LINK_STORE, 'readonly').objectStore(CLOUD_LINK_STORE).getAll();
+    request.onsuccess = () => { db.close(); resolve(request.result as CloudProjectLink[]); };
+    request.onerror = () => { db.close(); reject(request.error); };
+  });
+}
+async function readLocalCloudLink(projectId: string): Promise<CloudProjectLink | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(CLOUD_LINK_STORE, 'readonly').objectStore(CLOUD_LINK_STORE).get(projectId);
+    request.onsuccess = () => { db.close(); resolve((request.result as CloudProjectLink | undefined) || null); };
+    request.onerror = () => { db.close(); reject(request.error); };
+  });
+}
+async function writeLocalCloudLink(link: CloudProjectLink): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(CLOUD_LINK_STORE, 'readwrite');
+    tx.objectStore(CLOUD_LINK_STORE).put(link);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Cloud sync details could not be saved locally.')); };
   });
 }
 async function readLocalFolders(): Promise<ProjectFolder[]> {
@@ -498,12 +580,16 @@ async function removeLocalMediaAndSaveProject(
     const media = tx.objectStore(MEDIA_STORE);
     const blobs = tx.objectStore(MEDIA_BLOB_STORE);
     const key = `${project.id}:${assetId}`;
-    projectStore.put({
-      project,
-      assets: assets.map(({ blob: _blob, ...asset }) => asset),
-      savedAt: Date.now(),
-      selection,
-    } satisfies SavedProject);
+    const existingRequest = projectStore.get(project.id);
+    existingRequest.onsuccess = () => {
+      const existing = existingRequest.result as SavedProject | undefined;
+      projectStore.put({
+        project,
+        assets: makeSavedAssetMetadata(project, assets, existing?.assets),
+        savedAt: Date.now(),
+        selection,
+      } satisfies SavedProject);
+    };
     const request = media.get(key);
     request.onsuccess = () => {
       const record = request.result as StoredMediaRecord | undefined;
@@ -521,8 +607,9 @@ async function removeLocalMediaAndSaveProject(
 async function deleteLocalProject(projectId: string) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([PROJECT_STORE, MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
+    const tx = db.transaction([PROJECT_STORE, MEDIA_STORE, MEDIA_BLOB_STORE, CLOUD_LINK_STORE], 'readwrite');
     tx.objectStore(PROJECT_STORE).delete(projectId);
+    tx.objectStore(CLOUD_LINK_STORE).delete(projectId);
     const media = tx.objectStore(MEDIA_STORE);
     const blobs = tx.objectStore(MEDIA_BLOB_STORE);
     const cursorRequest = media.index('projectId').openCursor(IDBKeyRange.only(projectId));
@@ -746,6 +833,7 @@ function Home() {
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<'project' | 'export' | null>(null);
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
   const [projectSearch, setProjectSearch] = useState('');
@@ -868,6 +956,22 @@ function Home() {
     if (!saveQueue.current) throw new Error('Project save queue is unavailable.');
     return saveQueue.current({ project: nextProject, assets: nextAssets, selection: { ...selection } });
   }, []);
+  const cloudSelection = useMemo(
+    () => ({ clipId: selectedClipId, assetId: selectedAssetId }),
+    [selectedClipId, selectedAssetId],
+  );
+  const cloud = useCutlineCloud({
+    project,
+    assets,
+    selection: cloudSelection,
+    projectHydrated,
+    hasActiveProject,
+    persistLocalSnapshot: persistProjectSnapshot,
+    readLocalProject,
+    readLocalCloudLinks,
+    readLocalCloudLink,
+    writeLocalCloudLink,
+  });
   const rememberActiveProject = useCallback((projectId: string) => {
     try {
       window.localStorage.setItem(LAST_ACTIVE_PROJECT_KEY, projectId);
@@ -1085,6 +1189,7 @@ function Home() {
       setSaveState('saving');
       persistProjectSnapshot(snapshotProject, snapshotAssets, snapshotSelection)
         .then(() => {
+          void cloud.flushCloudSave().catch(() => undefined);
           if (
             revision === saveRevision.current &&
             projectRef.current === snapshotProject &&
@@ -1117,7 +1222,7 @@ function Home() {
       document.removeEventListener('visibilitychange', flushWhenHidden);
       window.removeEventListener('beforeunload', warnBeforeDiscard);
     };
-  }, [persistProjectSnapshot, projectHydrated, saveState, hasActiveProject]);
+  }, [persistProjectSnapshot, cloud.flushCloudSave, projectHydrated, saveState, hasActiveProject]);
 
   useEffect(() => {
     const wrap = previewWrapRef.current;
@@ -2309,6 +2414,21 @@ function Home() {
           }
           await flushCurrentProjectSave();
           saved = true;
+          if (cloud.session) {
+            let timeoutId = 0;
+            try {
+              await Promise.race([
+                cloud.flushCloudSave(),
+                new Promise<void>((_resolve, reject) => {
+                  timeoutId = window.setTimeout(() => reject(new Error('Cloud sync timed out.')), 4500);
+                }),
+              ]);
+            } catch {
+              notify('Your project was saved on this device. Cloud sync did not finish before closing; it will retry next time.', true);
+            } finally {
+              window.clearTimeout(timeoutId);
+            }
+          }
         } catch {
           notify('The latest project changes could not be saved before closing.', true);
         }
@@ -2326,10 +2446,18 @@ function Home() {
       unsubscribeCloseRequested();
       unsubscribeCloseCancelled();
     };
-  }, [flushCurrentProjectSave, notify]);
+  }, [flushCurrentProjectSave, cloud.flushCloudSave, cloud.session, notify]);
   const saveNow = async () => {
     try {
       if (hasActiveProject) await flushCurrentProjectSave();
+      try {
+        await cloud.flushCloudSave();
+      } catch (error) {
+        const reason = error instanceof Error ? ` ${error.message}` : '';
+        notify(`Saved on this device, but cloud save failed.${reason}`, true);
+        void readLocalProjects().then(setSavedProjects).catch(() => undefined);
+        return;
+      }
       void readLocalProjects().then(setSavedProjects).catch(() => undefined);
       notify('Project saved locally. Media stays on this device.');
     } catch {
@@ -2351,6 +2479,7 @@ function Home() {
     }
     try {
       await flushCurrentProjectSave();
+      await cloud.flushCloudSave().catch(() => undefined);
       const records = await readLocalProjects();
       const latestRecord = records.find((item) => item.project.id === record.project.id) || record;
       const localAssets = await readLocalMedia(latestRecord.project.id);
@@ -2372,6 +2501,141 @@ function Home() {
       return false;
     }
   };
+  const makeLocalSafetyCopy = async (record: SavedProject, localAssets: Asset[]) => {
+    const backupProject = structuredClone(record.project);
+    backupProject.id = uid();
+    const suffix = ' (local backup)';
+    backupProject.name = `${record.project.name.slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;
+    try {
+      await copyLocalMedia(record.project.id, backupProject.id);
+      await saveLocalProject(backupProject, localAssets, record.selection, record.assets);
+    } catch (error) {
+      try { await deleteLocalProject(backupProject.id); } catch { /* retain the original project if cleanup fails */ }
+      throw error;
+    }
+    return backupProject;
+  };
+  const openCloudProject = async (projectId: string) => {
+    if (!cloud.session) {
+      setAccountDialogOpen(true);
+      return;
+    }
+    if (mediaRemovalBusyRef.current || exportInProgress.current || mediaImporting) {
+      notify('Finish the current media or export operation before opening a cloud project.', true);
+      return;
+    }
+    cloud.setCloudBusyProjectId(projectId);
+    try {
+      if (hasActiveProject) {
+        await flushCurrentProjectSave();
+        await cloud.flushCloudSave().catch(() => undefined);
+      }
+      const { summary, state } = await cloud.fetchCloudProject(projectId);
+      if (summary.owner_id !== cloud.session.user.id) {
+        throw new Error('This cloud project belongs to a different account.');
+      }
+
+      const localRecord = await readLocalProject(projectId);
+      let localAssets: Asset[] = localRecord ? await readLocalMedia(projectId) : [];
+      if (localRecord) {
+        const localPhysicalIds = new Set(localAssets.map((asset) => asset.id));
+        const localMissing = localRecord.assets.filter((asset) => !localPhysicalIds.has(asset.id));
+        const localState = makeCloudEditorState(
+          localRecord.project,
+          localAssets,
+          localMissing,
+          localRecord.selection || { clipId: null, assetId: null },
+        );
+        const localHash = hashCloudEditorState(localState);
+        const remoteHash = hashCloudEditorState(state);
+        if (localHash !== remoteHash) {
+          const accepted = window.confirm(
+            `This device already has a different local version of “${localRecord.project.name}”. Cutline will first create a separate local backup with its media, then open the cloud version. Continue?`,
+          );
+          if (!accepted) return;
+          await makeLocalSafetyCopy(localRecord, localAssets);
+        }
+        if (!cloudMediaReferencesMatch(localAssets, state.assets)) {
+          if (localHash === remoteHash) {
+            throw new Error('The cloud media metadata could not be matched safely. Local project data was left untouched.');
+          }
+          await deleteLocalMediaForProject(projectId);
+          localAssets = [];
+        }
+      }
+
+      const selection = restoreProjectSelection(state.project, localAssets, state.selection);
+      await saveLocalProject(state.project, localAssets, selection, state.assets);
+      await writeLocalCloudLink({
+        projectId,
+        ownerId: summary.owner_id,
+        version: summary.version,
+        stateHash: hashCloudEditorState(state),
+      });
+      history.current = [];
+      future.current = [];
+      projectRef.current = state.project;
+      assetsRef.current = localAssets;
+      selectionRef.current = selection;
+      persistedSnapshot.current = { project: state.project, assets: localAssets, selection };
+      setProject(state.project);
+      setAssets(localAssets);
+      setSelectedClipId(selection.clipId);
+      setSelectedAssetId(selection.assetId);
+      setPlayhead(0);
+      setHasActiveProject(true);
+      setSaveState('saved');
+      setSavedProjects(await readLocalProjects());
+      setDialog(null);
+      rememberActiveProject(projectId);
+      void cloud.refreshCloudProjects().catch(() => undefined);
+      notify(`Opened “${state.project.name}” from the cloud. Video and audio files remain local${state.assets.length > localAssets.length ? '; some media may need relinking' : ''}.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not open this cloud project. The local project was kept.', true);
+    } finally {
+      cloud.setCloudBusyProjectId(null);
+    }
+  };
+  const saveLocalProjectToCloud = async (record: SavedProject) => {
+    if (!cloud.session) {
+      setAccountDialogOpen(true);
+      return;
+    }
+    cloud.setCloudBusyProjectId(record.project.id);
+    try {
+      const currentRecord = await readLocalProject(record.project.id) || record;
+      const isActive = projectRef.current.id === record.project.id && hasActiveProject;
+      if (isActive) await flushCurrentProjectSave();
+      const localAssets = isActive ? assetsRef.current : await readLocalMedia(record.project.id);
+      const snapshot = isActive
+        ? { project: projectRef.current, assets: localAssets, selection: selectionRef.current }
+        : {
+            project: currentRecord.project,
+            assets: localAssets,
+            selection: restoreProjectSelection(currentRecord.project, localAssets, currentRecord.selection || { clipId: null, assetId: null }),
+          };
+      await cloud.saveCloudSnapshot(snapshot, { allowRestore: true });
+      setSavedProjects(await readLocalProjects());
+      void cloud.refreshCloudProjects().catch(() => undefined);
+      notify(`“${snapshot.project.name}” is saved to your Cutline cloud account.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Cloud save failed. The local project remains available.', true);
+    } finally {
+      cloud.setCloudBusyProjectId(null);
+    }
+  };
+  const deleteCloudCopy = async (projectId: string, name: string) => {
+    if (!window.confirm(`Delete “${name}” from your Cutline cloud account? This does not delete any local project or media.`)) return;
+    cloud.setCloudBusyProjectId(projectId);
+    try {
+      await cloud.removeCloudProject(projectId);
+      notify('Cloud copy deleted. Any local copy and media remain on this device.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not delete the cloud copy.', true);
+    } finally {
+      cloud.setCloudBusyProjectId(null);
+    }
+  };
   const newProject = async (requestedName?: string, folderId: string | null = null): Promise<boolean> => {
     if (mediaRemovalBusyRef.current) {
       notify('Finish the media-removal confirmation before creating a project.', true);
@@ -2387,7 +2651,10 @@ function Home() {
     }
     let records = savedProjects;
     try {
-      if (hasActiveProject) await flushCurrentProjectSave();
+      if (hasActiveProject) {
+        await flushCurrentProjectSave();
+        await cloud.flushCloudSave().catch(() => undefined);
+      }
       records = await readLocalProjects();
       setSavedProjects(records);
     } catch {
@@ -3568,11 +3835,37 @@ function Home() {
                   : 'Save failed'}
           </span>
         </div>
+        <div
+          className={`save-state cloud-save-state save-state--${cloud.cloudSaveState === 'saved' ? 'saved' : cloud.cloudSaveState === 'saving' ? 'saving' : cloud.cloudSaveState === 'error' || cloud.cloudSaveState === 'conflict' ? 'error' : 'dirty'}`}
+          role="status"
+          aria-live="polite"
+          title={cloud.cloudError || (cloud.session ? 'Cloud project changes sync automatically.' : 'Sign in to enable private cloud project sync.')}
+          data-testid="status-cloud-save-state"
+        >
+          {cloud.cloudSaveState === 'saving' || cloud.cloudSaveState === 'checking'
+            ? <RefreshCw className="save-state__icon save-state__icon--spin" size={13} aria-hidden="true" />
+            : cloud.cloudSaveState === 'error' || cloud.cloudSaveState === 'conflict'
+              ? <CircleAlert className="save-state__icon" size={13} aria-hidden="true" />
+              : cloud.cloudSaveState === 'saved'
+                ? <Cloud size={13} aria-hidden="true" />
+                : <CloudUpload size={13} aria-hidden="true" />}
+          <span className="save-state__label">
+            {!supabaseClient ? 'Cloud setup required'
+              : !cloud.session ? 'Sign in to sync'
+                : cloud.cloudSaveState === 'checking' ? 'Checking cloud…'
+                  : cloud.cloudSaveState === 'saving' ? 'Saving cloud…'
+                    : cloud.cloudSaveState === 'dirty' ? 'Cloud changes pending'
+                      : cloud.cloudSaveState === 'saved' ? 'Cloud saved'
+                        : cloud.cloudSaveState === 'conflict' ? 'Cloud conflict'
+                          : cloud.cloudSaveState === 'error' ? 'Cloud error' : 'Cloud ready'}
+          </span>
+        </div>
         <div className="top-spacer" />
         <button className="icon-btn" onClick={undo} disabled={!history.current.length} title="Undo (Ctrl+Z)" data-testid="button-undo"><Undo2 size={16} /></button>
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
         <button className="btn" onClick={openProjects} disabled={mediaImporting} title={mediaImporting ? 'Wait for media import to finish' : 'Manage projects'} aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
+        <button className="btn" onClick={() => setAccountDialogOpen(true)} title={cloud.session ? `Signed in as ${cloud.session.user.email || 'Supabase user'}` : 'Sign in or create a Cutline account'} data-testid="button-account"><UserRound size={14} /><span>{cloud.session ? 'Account' : 'Sign in'}</span></button>
          <button className="btn primary" onClick={() => { setExportFolderId(project.folderId || 'unorganized'); setExportName(sanitizeExportBaseName(`${project.name}-export`)); setDialog('export'); }} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
       <section className="editor-body">
@@ -4046,6 +4339,31 @@ function Home() {
             />
             <button className="btn" onClick={() => projectBackupFileRef.current?.click()} data-testid="button-import-project"><Upload size={14} />Import backup</button>
           </div>
+          <section className="cloud-projects" aria-label="Cloud projects">
+            <div className="cloud-projects__heading">
+              <div><h3><Cloud size={14} /> Cloud projects</h3><p>Only project data syncs. Video and audio files remain on this device.</p></div>
+              {cloud.session && <button type="button" className="icon-btn" title="Refresh cloud project list" aria-label="Refresh cloud project list" onClick={() => void cloud.refreshCloudProjects().catch(() => undefined)} disabled={cloud.cloudLoading}><RefreshCw size={13} className={cloud.cloudLoading ? 'save-state__icon--spin' : ''} /></button>}
+            </div>
+            {!supabaseClient
+              ? <p className="cloud-projects__empty">{supabaseConfigurationError || 'Add the Vite Supabase URL and Publishable Key to enable cloud projects.'}</p>
+              : !cloud.session
+                ? <div className="cloud-projects__signed-out"><span>Sign in to back up and open projects across devices.</span><button type="button" className="btn" onClick={() => setAccountDialogOpen(true)}><UserRound size={13} />Sign in</button></div>
+                : cloud.cloudLoading && !cloud.cloudProjects.length
+                  ? <p className="cloud-projects__empty">Loading your cloud projects…</p>
+                  : cloud.cloudError
+                    ? <p className="cloud-projects__error" role="alert">{cloud.cloudError}</p>
+                    : cloud.cloudProjects.length
+                      ? <div className="cloud-projects__list">
+                          {cloud.cloudProjects.map((cloudProject) => <article className="cloud-projects__row" key={cloudProject.id}>
+                            <div><strong>{cloudProject.name}</strong><small>Version {cloudProject.version} · {new Date(cloudProject.updated_at).toLocaleString()}</small></div>
+                            <div>
+                              <button type="button" className="btn" onClick={() => void openCloudProject(cloudProject.id)} disabled={cloud.cloudBusyProjectId === cloudProject.id} aria-label={`Open cloud project ${cloudProject.name}`}>{cloud.cloudBusyProjectId === cloudProject.id ? 'Opening…' : 'Open'}</button>
+                              <button type="button" className="icon-btn" onClick={() => void deleteCloudCopy(cloudProject.id, cloudProject.name)} disabled={cloud.cloudBusyProjectId === cloudProject.id} title={`Delete cloud copy of ${cloudProject.name}`} aria-label={`Delete cloud copy of ${cloudProject.name}`}><Trash2 size={13} /></button>
+                            </div>
+                          </article>)}
+                        </div>
+                      : <p className="cloud-projects__empty">No cloud projects yet. Use the cloud upload button on a local project to back it up.</p>}
+          </section>
           {pendingDroppedFiles.length > 0 && <div className="project-library__drop-choice">
             <strong>{pendingDroppedFiles.length} dropped file{pendingDroppedFiles.length === 1 ? '' : 's'} waiting for a project</strong>
             <p>Nothing has been imported yet. Choose a destination or create a new project; these files will stay queued until you decide.</p>
@@ -4145,6 +4463,14 @@ function Home() {
               const firstMediaClip = currentProject.clips.find((clip) => clip.assetId);
               const thumbnail = record.assets.find((asset) => asset.id === firstMediaClip?.assetId && asset.thumbnail)?.thumbnail;
               const assignedFolder = projectFolders.find((folder) => folder.id === currentProject.folderId)?.name || 'Unorganized';
+              const cloudLink = cloud.cloudLinks[record.project.id];
+              const linkedCloudProject = cloud.cloudProjects.find((item) => item.id === record.project.id);
+              const cloudLinkLabel = !cloud.session ? '' : !cloudLink ? 'Local only'
+                : cloudLink.ownerId !== cloud.session.user.id ? 'Linked to another account'
+                  : !linkedCloudProject ? 'Cloud copy deleted'
+                    : cloudLink.version === linkedCloudProject.version ? `Cloud saved · v${cloudLink.version}` : 'Cloud changed · open cloud copy';
+              const canSyncCloud = Boolean(cloud.session && (!linkedCloudProject ||
+                (cloudLink?.ownerId === cloud.session.user.id && cloudLink.version === linkedCloudProject.version)));
               return <article
                 key={record.project.id}
                 className={`project-library__row${isCurrent ? ' is-current' : ''}`}
@@ -4164,8 +4490,10 @@ function Home() {
                   <span>{assignedFolder} · {new Date(record.savedAt).toLocaleString()} · {currentProject.width} × {currentProject.height} · {currentProject.frameRate} fps · {currentProject.clips.length} clips</span>
                   {latestExport && <small className="project-library__last-export">Last export: {latestExport.filename} · {new Date(latestExport.exportedAt).toLocaleString()} · {exportLocation}</small>}
                   <small className={`project-library__status project-library__status--${currentStatus}`}><i />{currentStatus === 'saved' ? 'Saved' : currentStatus === 'saving' ? 'Saving…' : currentStatus === 'dirty' ? 'Unsaved changes' : 'Save failed'}</small>
+                  {cloudLinkLabel && <small className="project-library__cloud-status"><Cloud size={11} />{cloudLinkLabel}</small>}
                 </div>
                 <div className="project-library__row-actions">
+                  {canSyncCloud && <button type="button" title={cloudLink && !linkedCloudProject ? 'Restore the cloud copy from this local project' : 'Save or sync this project to the cloud'} aria-label={`${cloudLink && !linkedCloudProject ? 'Restore' : 'Back up'} ${currentProject.name} to cloud`} onClick={() => void saveLocalProjectToCloud(record)} disabled={cloud.cloudBusyProjectId === record.project.id}><CloudUpload size={13} /></button>}
                   <button type="button" title="Move project" aria-label={`Move ${currentProject.name}`} onClick={() => { setMovingProjectId(record.project.id); setMoveFolderId(currentProject.folderId || 'unorganized'); }}><FolderInput size={13} /></button>
                   <button type="button" title="Open project" aria-label={`Open ${currentProject.name}`} onClick={() => void openProject(record)}><FolderOpen size={13} /></button>
                   <button type="button" title="Rename project" aria-label={`Rename ${currentProject.name}`} onClick={() => void renameSavedProject(record)}><Pencil size={13} /></button>
@@ -4185,6 +4513,12 @@ function Home() {
           <div className="dialog-actions"><button className="btn" disabled={!hasActiveProject} title={!hasActiveProject ? 'Create or open a project to continue.' : undefined} onClick={() => { setCreatingProject(false); setImportMediaAfterCreation(false); setMovingProjectId(null); setDialog(null); }} data-testid="button-close-projects">{hasActiveProject ? 'Close' : 'Open a project to continue'}</button></div>
         </section>
       </div>}
+      {accountDialogOpen && <SupabaseAccountDialog
+        client={supabaseClient}
+        session={cloud.session}
+        configurationError={supabaseConfigurationError}
+        onClose={() => setAccountDialogOpen(false)}
+      />}
       {detailsDialog && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailsDialog(null); }} onKeyDown={(event) => { if (event.key === 'Escape') setDetailsDialog(null); }}>
         <section className="dialog details-dialog" role="dialog" aria-modal="true" aria-label={detailsDialog.title}>
           <h2>{detailsDialog.title}</h2>
