@@ -1,7 +1,7 @@
 import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
-  Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen,
+  Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
   Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
@@ -17,6 +17,7 @@ import CutlineSelect from '@/components/CutlineSelect';
 import EffectWorkspace from '@/components/EffectWorkspace';
 import InspectorPanel from '@/components/InspectorPanel';
 import MarkupWorkspace from '@/components/MarkupWorkspace';
+import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTemplatesPanel';
 import {
   createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
@@ -98,7 +99,7 @@ const getCanvasSizeValue = (width: number, height: number) => {
   const value = `${width}x${height}`;
   return CANVAS_SIZES.some((preset) => preset.value === value) ? value : 'custom';
 };
-type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'effects' | 'transitions' | 'filters' | 'markup';
+type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup' | 'templates';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 type ProjectSaveSnapshot = { project: Project; assets: Asset[] };
 type MarkupToolMode = MarkupTool | 'eraser';
@@ -129,11 +130,13 @@ type MarkupPointerDrag = {
 const WORKSPACE_ITEMS: Array<{ id: LibraryWorkspace; label: string; icon: ReactNode }> = [
   { id: 'media', label: 'Media', icon: <Film size={16} /> },
   { id: 'audio', label: 'Audio', icon: <Music2 size={16} /> },
+  { id: 'text', label: 'Text', icon: <Type size={16} /> },
   { id: 'overlays', label: 'Overlays', icon: <Layers2 size={16} /> },
   { id: 'effects', label: 'Effects', icon: <WandSparkles size={16} /> },
   { id: 'transitions', label: 'Transitions', icon: <Sparkles size={16} /> },
   { id: 'filters', label: 'Filters', icon: <SlidersHorizontal size={16} /> },
   { id: 'markup', label: 'Markup', icon: <Pencil size={16} /> },
+  { id: 'templates', label: 'Templates', icon: <Grid2X2 size={16} /> },
 ];
 const createProject = (name = 'New Project 1', folderId: string | null = null): Project => ({
   id: crypto.randomUUID(), name, folderId, width: 1920, height: 1080, frameRate: 30,
@@ -1461,6 +1464,62 @@ function Home() {
     const clip: Clip = { id: uid(), assetId: asset.id, trackId: target.id, timelineStart: Math.max(0, at), sourceIn: 0, sourceOut: duration, volume: 1, speed: 1, ...(audioOnlySource ? { audioOnly: true } : {}), transform: { ...DEFAULT_TRANSFORM }, effects: { ...DEFAULT_EFFECTS }, opacity: 1, fadeIn: 0, fadeOut: 0 };
     commit((current) => ({ ...current, clips: [...current.clips, clip] }));
     setSelectedClipId(clip.id);
+    setPlayhead(clip.timelineStart);
+  }, [commit, notify, playhead]);
+  const addTitleTemplate = useCallback((template: TitleTemplate) => {
+    const textTrack = projectRef.current.tracks.find((track) =>
+      track.kind === 'text' && !track.locked && track.visible !== false,
+    );
+    const track = textTrack || {
+      id: uid(),
+      name: `Text ${projectRef.current.tracks.filter((item) => item.kind === 'text').length + 1}`,
+      kind: 'text' as const,
+      order: projectRef.current.tracks.length,
+      muted: false,
+      visible: true,
+      locked: false,
+    };
+    const clip: Clip = {
+      id: uid(),
+      trackId: track.id,
+      timelineStart: Math.max(0, playhead),
+      sourceIn: 0,
+      sourceOut: template.duration ?? 5,
+      volume: 0,
+      speed: 1,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
+      opacity: 1,
+      fadeIn: 0,
+      fadeOut: 0,
+      text: {
+        templateId: template.id,
+        templateName: template.name,
+        content: template.text,
+        fontFamily: template.fontFamily,
+        ...(template.fontStyle ? { fontStyle: template.fontStyle } : {}),
+        fontSize: template.fontSize,
+        fontWeight: template.fontWeight,
+        color: template.color,
+        align: template.align,
+        x: template.x,
+        y: template.y,
+        backgroundColor: template.backgroundColor,
+        outlineColor: template.outlineColor,
+        outlineWidth: template.outlineWidth,
+        shadow: template.shadow,
+        opacity: template.opacity,
+        ...(template.animation ? { animation: template.animation } : {}),
+        ...(template.backgroundStyle ? { backgroundStyle: { ...template.backgroundStyle } } : {}),
+      },
+    };
+    commit((current) => ({
+      ...current,
+      tracks: current.tracks.some((item) => item.id === track.id) ? current.tracks : [...current.tracks, track],
+      clips: [...current.clips, clip],
+    }));
+    setSelectedClipId(clip.id);
+    setSelectedAssetId(null);
     setPlayhead(clip.timelineStart);
   }, [commit, notify, playhead]);
   const undo = () => {
@@ -2934,6 +2993,7 @@ function Home() {
       disabled: contextMenuClipLocked,
       action: () => {
         setSelectedClipId(contextMenuClip.id);
+        setLibraryWorkspace('text');
         window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="input-title-content"]')?.focus(), 0);
       },
     }] : []),
@@ -3143,6 +3203,7 @@ function Home() {
             </div>
             <div className="library-foot">Media stays on this device. Removing an item only removes it from this project.</div>
           </>}
+          {(libraryWorkspace === 'text' || libraryWorkspace === 'templates') && <TitleTemplatesPanel onAdd={addTitleTemplate} />}
           {(libraryWorkspace === 'effects' || libraryWorkspace === 'transitions' || libraryWorkspace === 'filters') &&
             <EffectWorkspace
               workspace={libraryWorkspace}
