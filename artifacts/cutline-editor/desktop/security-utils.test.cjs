@@ -7,12 +7,27 @@ const test = require('node:test');
 const {
   createNativeMediaDescriptor,
   confirmMediaRemoval,
+  createContentSecurityPolicy,
   createMediaRemovalDialogOptions,
+  getSupabaseConnectSources,
   getMediaContentType,
   normalizeMediaRemovalRequest,
   resolveRendererFile,
   SUPPORTED_MEDIA_EXTENSIONS,
 } = require('./security-utils.cjs');
+
+test('desktop content policy permits only the configured Supabase origin and its realtime socket', () => {
+  assert.deepEqual(getSupabaseConnectSources('https://cutline-project.supabase.co'), [
+    'https://cutline-project.supabase.co',
+    'wss://cutline-project.supabase.co',
+  ]);
+  const policy = createContentSecurityPolicy('https://cutline-project.supabase.co');
+  assert.match(policy, /connect-src 'self' blob: https:\/\/cutline-project\.supabase\.co wss:\/\/cutline-project\.supabase\.co/);
+  assert.doesNotMatch(policy, /connect-src[^;]*https: /);
+  assert.deepEqual(getSupabaseConnectSources('https://cutline-project.supabase.co/path'), []);
+  assert.deepEqual(getSupabaseConnectSources('javascript:alert(1)'), []);
+  assert.deepEqual(getSupabaseConnectSources(''), []);
+});
 
 test('native media descriptors expose safe metadata without changing the selected source file', (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cutline-electron-media-'));

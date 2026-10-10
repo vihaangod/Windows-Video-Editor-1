@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  CloudProjectConflictError,
   cloudMediaReferencesMatch,
+  deleteCloudProject,
   hashCloudEditorState,
+  listCloudProjects,
+  loadCloudProject,
   makeCloudEditorState,
   parseCloudEditorState,
+  saveCloudProject,
 } from './cloud-projects.ts';
 import type { Asset, AssetMetadata, Project, ProjectSelection } from './composition.ts';
 
@@ -101,4 +107,77 @@ test('cloud editor state validates the project id and round-trips with a stable 
     /unsupported or incomplete/,
   );
   assert.throws(() => parseCloudEditorState(null, project.id), /valid saved editor state/);
+});
+
+test('cloud project list, load, and delete use the existing Supabase project tables', async () => {
+  const summary = {
+    id: 'b37d6ed4-9edf-46d9-9b28-4d5c7669ab94',
+    owner_id: 'cdd4df4b-693b-4d14-9ef5-92a263d83c64',
+    name: 'Cloud timeline',
+    version: 3,
+    updated_at: '2026-10-10T12:00:00.000Z',
+  };
+  const state = makeCloudEditorState({ ...project, id: summary.id }, [], [], { clipId: null, assetId: null });
+  const fromCalls: string[] = [];
+  const fakeClient = {
+    from(table: string) {
+      fromCalls.push(table);
+      return {
+        select() {
+          return {
+            order: async () => ({ data: [summary], error: null }),
+            eq(_column: string, _value: string) {
+              return {
+                single: async () => ({ data: summary, error: null }),
+                maybeSingle: async () => ({ data: { state }, error: null }),
+              };
+            },
+          };
+        },
+        delete() {
+          return {
+            eq: async () => ({ error: null }),
+          };
+        },
+      };
+    },
+  } as unknown as SupabaseClient;
+
+  assert.deepEqual(await listCloudProjects(fakeClient), [summary]);
+  const loaded = await loadCloudProject(fakeClient, summary.id);
+  assert.deepEqual(loaded.summary, summary);
+  assert.deepEqual(loaded.state, state);
+  await deleteCloudProject(fakeClient, summary.id);
+  assert.deepEqual(fromCalls, ['cutline_projects', 'cutline_projects', 'cutline_project_state', 'cutline_projects']);
+});
+
+test('cloud save uses the existing optimistic-version RPC and surfaces conflicts', async () => {
+  const cloudProject = { ...project, id: 'b37d6ed4-9edf-46d9-9b28-4d5c7669ab94' };
+  const state = makeCloudEditorState(cloudProject, [], [], { clipId: null, assetId: null });
+  let rpcName = '';
+  let rpcPayload: Record<string, unknown> | null = null;
+  const successfulClient = {
+    rpc: async (name: string, payload: Record<string, unknown>) => {
+      rpcName = name;
+      rpcPayload = payload;
+      return { data: 4, error: null };
+    },
+  } as unknown as SupabaseClient;
+
+  assert.equal(await saveCloudProject(successfulClient, state, 3), 4);
+  assert.equal(rpcName, 'save_cutline_project');
+  assert.deepEqual(rpcPayload, {
+    p_project_id: cloudProject.id,
+    p_name: cloudProject.name,
+    p_state: state,
+    p_expected_version: 3,
+  });
+
+  const conflictingClient = {
+    rpc: async () => ({ data: null, error: { code: '40001', message: 'version mismatch' } }),
+  } as unknown as SupabaseClient;
+  await assert.rejects(
+    saveCloudProject(conflictingClient, state, 3),
+    (error: unknown) => error instanceof CloudProjectConflictError,
+  );
 });

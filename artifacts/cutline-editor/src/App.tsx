@@ -2916,6 +2916,20 @@ function Home() {
       cloud.setCloudBusyProjectId(null);
     }
   };
+  const syncLinkedCloudProject = async (
+    projectSnapshot: Project,
+    projectAssets: Asset[],
+    selection: ProjectSelection,
+  ) => {
+    const link = await readLocalCloudLink(projectSnapshot.id);
+    const ownerId = cloud.session?.user.id;
+    if (!link || !ownerId || link.ownerId !== ownerId) return false;
+    if (!cloud.cloudReady) await cloud.refreshCloudProjects();
+    await cloud.saveCloudSnapshot(
+      { project: projectSnapshot, assets: projectAssets, selection },
+    );
+    return true;
+  };
   const deleteCloudCopy = async (projectId: string, name: string) => {
     if (!window.confirm(`Delete “${name}” from your Cutline cloud account? This does not delete any local project or media.`)) return;
     cloud.setCloudBusyProjectId(projectId);
@@ -3018,8 +3032,18 @@ function Home() {
     const updatedProject = { ...record.project, folderId };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
-      await persistProjectSnapshot(updatedProject, projectAssets);
-      if (projectRef.current.id === record.project.id) commit(() => updatedProject);
+      const selection = restoreProjectSelection(updatedProject, projectAssets, record.selection);
+      await persistProjectSnapshot(updatedProject, projectAssets, selection);
+      const isActiveProject = projectRef.current.id === record.project.id;
+      if (isActiveProject) {
+        commit(() => updatedProject);
+      } else {
+        try {
+          await syncLinkedCloudProject(updatedProject, projectAssets, selection);
+        } catch (error) {
+          notify(`Moved locally, but the cloud copy could not be updated. ${error instanceof Error ? error.message : ''}`, true);
+        }
+      }
       setSavedProjects(await readLocalProjects());
       setMovingProjectId(null);
       notify(folderId ? `Moved “${record.project.name}” to ${projectFolders.find((folder) => folder.id === folderId)?.name || 'the selected folder'}.` : `Moved “${record.project.name}” to Unorganized Projects.`);
@@ -3227,8 +3251,20 @@ function Home() {
     const updatedProject = { ...record.project, name: cleanedName };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
-      await persistProjectSnapshot(updatedProject, projectAssets);
-      if (projectRef.current.id === record.project.id) commit(() => updatedProject);
+      const selection = restoreProjectSelection(updatedProject, projectAssets, record.selection);
+      await persistProjectSnapshot(updatedProject, projectAssets, selection);
+      const isActiveProject = projectRef.current.id === record.project.id;
+      if (isActiveProject) {
+        commit(() => updatedProject);
+      } else {
+        try {
+          await syncLinkedCloudProject(updatedProject, projectAssets, selection);
+        } catch (error) {
+          notify(`Renamed locally, but the cloud copy could not be updated. ${error instanceof Error ? error.message : ''}`, true);
+          setSavedProjects(await readLocalProjects());
+          return;
+        }
+      }
       setSavedProjects(await readLocalProjects());
       notify('Project renamed.');
     } catch {

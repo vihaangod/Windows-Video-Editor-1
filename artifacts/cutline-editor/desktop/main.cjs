@@ -14,6 +14,7 @@ const {
 } = require('electron');
 const {
   confirmMediaRemoval,
+  createContentSecurityPolicy,
   createNativeMediaDescriptor,
   resolveRendererFile,
   SUPPORTED_MEDIA_EXTENSIONS,
@@ -30,20 +31,17 @@ const CLOSE_CANCELLED_CHANNEL = 'cutline:close-cancelled';
 const CLOSE_RESULT_CHANNEL = 'cutline:close-result';
 const CLOSE_SAVE_TIMEOUT_MS = 15_000;
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || '';
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "media-src 'self' blob:",
-  "connect-src 'self' blob:",
-  "font-src 'self' data:",
-  "worker-src 'self' blob:",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
+function getConfiguredSupabaseOrigin() {
+  if (process.env.CUTLINE_SUPABASE_ORIGIN) return process.env.CUTLINE_SUPABASE_ORIGIN;
+  try {
+    const configPath = path.join(__dirname, '..', 'dist', 'public', 'cutline-desktop-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    return typeof config.supabaseOrigin === 'string' ? config.supabaseOrigin : '';
+  } catch {
+    return '';
+  }
+}
+const CONTENT_SECURITY_POLICY = createContentSecurityPolicy(getConfiguredSupabaseOrigin());
 const MEDIA_EXTENSIONS = [
   ...new Set([...SUPPORTED_MEDIA_EXTENSIONS, 'flac']),
 ];

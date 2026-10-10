@@ -82,6 +82,8 @@ export function useCutlineCloud({
     try {
       const [projects, links] = await Promise.all([listCloudProjects(supabaseClient), readLocalCloudLinks()]);
       const nextLinks = Object.fromEntries(links.map((link) => [link.projectId, link]));
+      cloudProjectsRef.current = projects;
+      cloudLinksRef.current = nextLinks;
       setCloudProjects(projects);
       setCloudLinks(nextLinks);
       setCloudReady(true);
@@ -111,6 +113,8 @@ export function useCutlineCloud({
       if (!nextSession) {
         setCloudProjects([]);
         setCloudLinks({});
+        cloudProjectsRef.current = [];
+        cloudLinksRef.current = {};
         setCloudReady(true);
         setCloudSaveState('off');
         setCloudError('');
@@ -139,6 +143,8 @@ export function useCutlineCloud({
     if (!userId) {
       setCloudProjects([]);
       setCloudLinks({});
+        cloudProjectsRef.current = [];
+        cloudLinksRef.current = {};
       setCloudReady(true);
       setCloudLoading(false);
       setCloudSaveState('off');
@@ -155,8 +161,11 @@ export function useCutlineCloud({
     void Promise.all([listCloudProjects(supabaseClient!), readLocalCloudLinks()])
       .then(([projects, links]) => {
         if (!active) return;
+        const nextLinks = Object.fromEntries(links.map((link) => [link.projectId, link]));
+        cloudProjectsRef.current = projects;
+        cloudLinksRef.current = nextLinks;
         setCloudProjects(projects);
-        setCloudLinks(Object.fromEntries(links.map((link) => [link.projectId, link])));
+        setCloudLinks(nextLinks);
         setCloudReady(true);
       })
       .catch((error: unknown) => {
@@ -206,6 +215,7 @@ export function useCutlineCloud({
     const version = await saveCloudProject(supabaseClient, state, link && remote ? link.version : null);
     const nextLink: CloudProjectLink = { projectId: job.project.id, ownerId: job.ownerId, version, stateHash };
     await writeLocalCloudLink(nextLink);
+    cloudLinksRef.current = { ...cloudLinksRef.current, [nextLink.projectId]: nextLink };
     setCloudLinks((current) => ({ ...current, [nextLink.projectId]: nextLink }));
     const updatedAt = new Date().toISOString();
     setCloudProjects((current) => {
@@ -216,7 +226,9 @@ export function useCutlineCloud({
         version,
         updated_at: updatedAt,
       };
-      return [summary, ...current.filter((item) => item.id !== summary.id)];
+      const next = [summary, ...current.filter((item) => item.id !== summary.id)];
+      cloudProjectsRef.current = next;
+      return next;
     });
     return nextLink;
   };
@@ -273,6 +285,18 @@ export function useCutlineCloud({
     };
   }, [project, assets, selection, projectHydrated, hasActiveProject, session?.user.id, cloudReady, saveCloudSnapshot]);
 
+  useEffect(() => {
+    if (!session?.user.id || !cloudReady || !projectHydrated || !hasActiveProject) return;
+    const retryWhenOnline = () => {
+      setCloudSaveState('checking');
+      void refreshCloudProjects()
+        .then(() => saveCloudSnapshot())
+        .catch(() => undefined);
+    };
+    window.addEventListener('online', retryWhenOnline);
+    return () => window.removeEventListener('online', retryWhenOnline);
+  }, [session?.user.id, cloudReady, projectHydrated, hasActiveProject, refreshCloudProjects, saveCloudSnapshot]);
+
   const flushCloudSave = useCallback(async () => {
     if (saveTimer.current !== undefined) {
       window.clearTimeout(saveTimer.current);
@@ -292,6 +316,7 @@ export function useCutlineCloud({
     const { error } = await supabaseClient.from('cutline_projects').delete().eq('id', projectId);
     if (error) throw error;
     setCloudProjects((current) => current.filter((item) => item.id !== projectId));
+    cloudProjectsRef.current = cloudProjectsRef.current.filter((item) => item.id !== projectId);
     if (projectId === activeProjectIdRef.current) {
       setCloudSaveState('conflict');
       setCloudError('The cloud copy was deleted. Your local project and media are safe; use Restore from the local project list to upload it again.');

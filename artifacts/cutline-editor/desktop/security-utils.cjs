@@ -32,6 +32,37 @@ function getMediaContentType(fileName) {
   return MEDIA_CONTENT_TYPES[path.extname(fileName).toLowerCase()] || null;
 }
 
+function getSupabaseConnectSources(supabaseOrigin) {
+  if (typeof supabaseOrigin !== 'string' || !supabaseOrigin.trim()) return [];
+
+  try {
+    const url = new URL(supabaseOrigin);
+    if (!['http:', 'https:'].includes(url.protocol) || url.origin !== supabaseOrigin) return [];
+    const realtimeProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return [url.origin, `${realtimeProtocol}//${url.host}`];
+  } catch {
+    return [];
+  }
+}
+
+function createContentSecurityPolicy(supabaseOrigin) {
+  const connectSources = ["'self'", 'blob:', ...getSupabaseConnectSources(supabaseOrigin)];
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    `connect-src ${connectSources.join(' ')}`,
+    "font-src 'self' data:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 function createNativeMediaDescriptor(filePath, token) {
   if (typeof filePath !== 'string' || typeof token !== 'string' || !/^[a-f0-9-]{36}$/i.test(token)) {
     return null;
@@ -125,6 +156,8 @@ module.exports = {
   createNativeMediaDescriptor,
   createMediaRemovalDialogOptions,
   confirmMediaRemoval,
+  createContentSecurityPolicy,
+  getSupabaseConnectSources,
   getMediaContentType,
   normalizeMediaRemovalRequest,
   resolveRendererFile,

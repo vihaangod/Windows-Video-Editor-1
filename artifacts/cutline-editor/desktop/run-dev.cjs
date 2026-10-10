@@ -5,26 +5,13 @@ const packageRoot = path.resolve(__dirname, '..');
 const viteBin = require.resolve('vite/bin/vite.js');
 const electronBin = require('electron');
 const viteUrl = 'http://127.0.0.1:5173';
-const viteProcess = spawn(process.execPath, [
-  viteBin,
-  '--config',
-  path.join(packageRoot, 'vite.config.ts'),
-  '--host',
-  '127.0.0.1',
-  '--port',
-  '5173',
-  '--strictPort',
-], {
-  cwd: packageRoot,
-  env: { ...process.env, PORT: '5173', BASE_PATH: '/' },
-  stdio: 'inherit',
-});
+let viteProcess = null;
 
 let electronProcess = null;
 let shuttingDown = false;
 
 function stopVite() {
-  if (!viteProcess.killed) viteProcess.kill();
+  if (viteProcess && !viteProcess.killed) viteProcess.kill();
 }
 
 async function waitForVite() {
@@ -52,13 +39,39 @@ function shutdown(signal) {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-waitForVite().then(() => {
+async function getSupabaseOrigin() {
+  const { loadEnv } = await import('vite');
+  try {
+    return new URL(loadEnv('development', packageRoot, 'VITE_').VITE_SUPABASE_URL || '').origin;
+  } catch {
+    return '';
+  }
+}
+
+getSupabaseOrigin().then(async (supabaseOrigin) => {
+  viteProcess = spawn(process.execPath, [
+    viteBin,
+    '--config',
+    path.join(packageRoot, 'vite.config.ts'),
+    '--host',
+    '127.0.0.1',
+    '--port',
+    '5173',
+    '--strictPort',
+  ], {
+    cwd: packageRoot,
+    env: { ...process.env, PORT: '5173', BASE_PATH: '/' },
+    stdio: 'inherit',
+  });
+  await waitForVite();
+  return supabaseOrigin;
+}).then((supabaseOrigin) => {
   electronProcess = spawn(electronBin, [
     path.join(packageRoot, 'desktop', 'main.cjs'),
     ...(process.env.CUTLINE_ELECTRON_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
   ], {
     cwd: packageRoot,
-    env: { ...process.env, VITE_DEV_SERVER_URL: viteUrl },
+    env: { ...process.env, VITE_DEV_SERVER_URL: viteUrl, CUTLINE_SUPABASE_ORIGIN: supabaseOrigin || '' },
     stdio: 'inherit',
   });
   electronProcess.on('error', (error) => {
