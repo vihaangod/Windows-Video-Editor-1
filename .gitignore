@@ -4,6 +4,7 @@
 dist
 tmp
 out-tsc
+artifacts/cutline-editor/desktop-release
 *.tsbuildinfo
 .expo
 .expo-shared

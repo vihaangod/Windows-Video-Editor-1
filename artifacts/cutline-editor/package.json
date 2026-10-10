@@ -2,15 +2,53 @@
   "name": "@workspace/cutline-editor",
   "version": "0.0.0",
   "private": true,
+  "description": "Local-first video editor for browser and desktop.",
+  "author": "Cutline",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
+    "build:desktop:renderer": "node desktop/build-renderer.cjs",
+    "electron:dev": "node desktop/run-dev.cjs",
+    "electron:pack:dir": "pnpm run build:desktop:renderer && electron-builder --dir",
+    "electron:dist:win": "pnpm run build:desktop:renderer && electron-builder --win nsis --x64",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:timeline": "node --experimental-strip-types --test src/lib/timeline-geometry.test.ts src/lib/export-utils.test.ts src/lib/project-library-utils.test.ts",
     "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts",
-    "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts"
+    "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts",
+    "test:desktop": "node --test desktop/security-utils.test.cjs"
+  },
+  "build": {
+    "appId": "com.cutline.editor",
+    "productName": "Cutline",
+    "directories": {
+      "output": "desktop-release"
+    },
+    "files": [
+      "desktop/**/*",
+      "dist/public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "desktop-assets/cutline-app-icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Cutline-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -56,6 +94,8 @@
     "clsx": "catalog:",
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "catalog:",
     "input-otp": "^1.4.2",

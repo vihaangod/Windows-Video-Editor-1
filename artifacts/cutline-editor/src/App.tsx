@@ -1,6 +1,6 @@
 import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
+  Activity, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen,
   Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
@@ -21,7 +21,7 @@ import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTempl
 import {
   createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, FILTER_PRESETS, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, restoreProjectSelection, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type ProjectSelection, type SavedProject, type TextOverlay, type TimelineFilterEffect, type Track, type TrackKind,
+  getPreviewCanvasSize, removeAssetReferencesFromProject, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type ProjectSelection, type SavedProject, type TextOverlay, type TimelineFilterEffect, type Track, type TrackKind,
 } from '@/lib/composition';
 import {
   getExportFrameCount,
@@ -42,6 +42,7 @@ import { Route, Switch, Router as WouterRouter } from 'wouter';
 type Notice = { message: string; error?: boolean };
 const DB_NAME = 'cutline-local-editor-v1';
 const DB_VERSION = 4;
+const EXPANDED_PROJECT_FOLDERS_KEY = 'cutline-project-library-expanded-folders-v1';
 const LEGACY_STORE = 'projects';
 const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
@@ -734,6 +735,7 @@ function Home() {
   const [hasActiveProject, setHasActiveProject] = useState(false);
   const [pendingMediaRemoval, setPendingMediaRemoval] = useState<{ projectId: string; assetId: string; name: string; clipCount: number } | null>(null);
   const [mediaRemovalBusy, setMediaRemovalBusy] = useState(false);
+  const mediaRemovalBusyRef = useRef(false);
   const [importMediaAfterCreation, setImportMediaAfterCreation] = useState(false);
   const [libraryWorkspace, setLibraryWorkspace] = useState<LibraryWorkspace>('media');
   const [playhead, setPlayhead] = useState(0);
@@ -748,6 +750,14 @@ function Home() {
   const [projectSearch, setProjectSearch] = useState('');
   const [projectSort, setProjectSort] = useState<'modified' | 'name'>('modified');
   const [selectedProjectFolder, setSelectedProjectFolder] = useState<'all' | 'unorganized' | string>('all');
+  const [expandedProjectFolders, setExpandedProjectFolders] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(EXPANDED_PROJECT_FOLDERS_KEY) || '[]') as unknown;
+      return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [creatingProject, setCreatingProject] = useState(false);
   const [draftProjectName, setDraftProjectName] = useState('');
   const [draftProjectFolderId, setDraftProjectFolderId] = useState('unorganized');
@@ -828,12 +838,20 @@ function Home() {
   const markupPointerDrag = useRef<MarkupPointerDrag | null>(null);
   const clipboardClip = useRef<Clip | null>(null);
   const exportCancelRequested = useRef(false);
+  const exportInProgress = useRef(false);
   const isPlayingRef = useRef(false);
   const projectRef = useRef(project);
   const selectionRef = useRef<ProjectSelection>({ clipId: selectedClipId, assetId: selectedAssetId });
   const projectBackupFileRef = useRef<HTMLInputElement>(null);
   useEffect(() => setCustomCanvas({ width: String(project.width), height: String(project.height) }), [project.width, project.height]);
   useEffect(() => setCustomCanvasMode(false), [project.id]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EXPANDED_PROJECT_FOLDERS_KEY, JSON.stringify([...expandedProjectFolders]));
+    } catch {
+      // Expanded folders are a convenience preference; project data remains in IndexedDB.
+    }
+  }, [expandedProjectFolders]);
   projectRef.current = project;
   selectionRef.current = { clipId: selectedClipId, assetId: selectedAssetId };
   const assetsRef = useRef(assets);
@@ -2054,6 +2072,14 @@ function Home() {
     setPlaying(true);
   };
   const openProjects = async () => {
+    if (mediaRemovalBusyRef.current) {
+      notify('Finish the media-removal confirmation before changing projects.', true);
+      return;
+    }
+    if (exportInProgress.current) {
+      notify('Wait for the current export to finish before changing projects.', true);
+      return;
+    }
     if (mediaImporting) {
       notify('Wait for media import to finish before changing projects.', true);
       return;
@@ -2185,6 +2211,14 @@ function Home() {
     }
   };
   const openProject = async (record: SavedProject): Promise<boolean> => {
+    if (mediaRemovalBusyRef.current) {
+      notify('Finish the media-removal confirmation before changing projects.', true);
+      return false;
+    }
+    if (exportInProgress.current) {
+      notify('Wait for the current export to finish before changing projects.', true);
+      return false;
+    }
     if (mediaImporting) {
       notify('Wait for media import to finish before changing projects.', true);
       return false;
@@ -2212,6 +2246,14 @@ function Home() {
     }
   };
   const newProject = async (requestedName?: string, folderId: string | null = null): Promise<boolean> => {
+    if (mediaRemovalBusyRef.current) {
+      notify('Finish the media-removal confirmation before creating a project.', true);
+      return false;
+    }
+    if (exportInProgress.current) {
+      notify('Wait for the current export to finish before creating a project.', true);
+      return false;
+    }
     if (mediaImporting) {
       notify('Wait for media import to finish before changing projects.', true);
       return false;
@@ -2226,12 +2268,27 @@ function Home() {
     }
     history.current = []; future.current = [];
     const nextProject = createProject(requestedName?.trim() || nextProjectName(records), folderId);
+    const initialSelection: ProjectSelection = { clipId: null, assetId: null };
+    try {
+      await persistProjectSnapshot(nextProject, [], initialSelection);
+    } catch {
+      setSaveState('error');
+      notify('Could not save the new project locally. Check browser storage space and permissions.', true);
+      return false;
+    }
+    const savedAt = Date.now();
+    const updatedRecords = await readLocalProjects().catch(() => [
+      ...records.filter((record) => record.project.id !== nextProject.id),
+      { project: nextProject, assets: [], savedAt, selection: initialSelection },
+    ]);
+    setSavedProjects(updatedRecords);
     persistedSnapshot.current = null;
     projectRef.current = nextProject;
     assetsRef.current = [];
-    selectionRef.current = { clipId: null, assetId: null };
+    selectionRef.current = initialSelection;
     setProject(nextProject); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0);
-    setHasActiveProject(true); setDialog(null);
+    persistedSnapshot.current = { project: nextProject, assets: [], selection: initialSelection };
+    setHasActiveProject(true); setSaveState('saved'); setDialog(null);
     return true;
   };
   const beginNewProject = () => {
@@ -2381,58 +2438,81 @@ function Home() {
       notify('Could not duplicate this media item. Check available browser storage.', true);
     }
   };
-  const removeMediaFromProject = (asset: Asset) => {
-    if (!hasActiveProject) return;
-    const currentProject = projectRef.current;
-    const clipCount = currentProject.clips.filter((clip) => clip.assetId === asset.id).length;
-    setPendingMediaRemoval({ projectId: currentProject.id, assetId: asset.id, name: asset.name, clipCount });
-  };
-  const confirmMediaRemoval = async () => {
-    const request = pendingMediaRemoval;
-    if (!request || mediaRemovalBusy) return;
+  const performMediaRemoval = async (request: NonNullable<typeof pendingMediaRemoval>) => {
     if (!hasActiveProject || projectRef.current.id !== request.projectId) {
       setPendingMediaRemoval(null);
       notify('The active project changed. No media was removed.', true);
       return;
     }
+    await flushCurrentProjectSave();
+    const currentProject = projectRef.current;
+    if (currentProject.id !== request.projectId) throw new Error('The active project changed before removal completed.');
+    if (!assetsRef.current.some((asset) => asset.id === request.assetId)) {
+      setPendingMediaRemoval(null);
+      notify('This media item is no longer in the active project. Nothing was removed.', true);
+      return;
+    }
+    const linkedClips = currentProject.clips.filter((clip) => clip.assetId === request.assetId);
+    const nextAssets = assetsRef.current.filter((item) => item.id !== request.assetId);
+    const nextProject = constrainTimelineFilters(removeAssetReferencesFromProject(currentProject, request.assetId));
+    const nextSelection = restoreProjectSelection(nextProject, nextAssets, {
+      ...selectionRef.current,
+      ...(selectionRef.current.assetId === request.assetId ? { assetId: null } : {}),
+    });
+    await removeLocalMediaAndSaveProject(nextProject, nextAssets, request.assetId, nextSelection);
+
+    projectRef.current = nextProject;
+    assetsRef.current = nextAssets;
+    selectionRef.current = nextSelection;
+    persistedSnapshot.current = { project: nextProject, assets: nextAssets, selection: nextSelection };
+    commit(() => nextProject);
+    setAssets(nextAssets);
+    setSelectedClipId(nextSelection.clipId);
+    setSelectedAssetId(nextSelection.assetId);
+    setMediaRevision((revision) => revision + 1);
+    setSaveState('saved');
+    void readLocalProjects().then(setSavedProjects).catch(() => undefined);
+    setPendingMediaRemoval(null);
+    notify(`Removed “${request.name}” and ${linkedClips.length} linked timeline clip${linkedClips.length === 1 ? '' : 's'} from this project. The original file was not deleted.`);
+  };
+  const removeMediaFromProject = async (asset: Asset) => {
+    if (!hasActiveProject || mediaRemovalBusyRef.current) return;
+    const currentProject = projectRef.current;
+    const request = {
+      projectId: currentProject.id,
+      assetId: asset.id,
+      name: asset.name,
+      clipCount: currentProject.clips.filter((clip) => clip.assetId === asset.id).length,
+    };
+    const nativeConfirm = window.cutlineDesktop?.confirmMediaRemoval;
+    if (!nativeConfirm) {
+      setPendingMediaRemoval(request);
+      return;
+    }
+    mediaRemovalBusyRef.current = true;
     setMediaRemovalBusy(true);
     try {
-      await flushCurrentProjectSave();
-      const currentProject = projectRef.current;
-      if (currentProject.id !== request.projectId) throw new Error('The active project changed before removal completed.');
-      const linkedClips = currentProject.clips.filter((clip) => clip.assetId === request.assetId);
-      const linkedClipIds = new Set(linkedClips.map((clip) => clip.id));
-      const nextAssets = assetsRef.current.filter((item) => item.id !== request.assetId);
-      const nextProject = constrainTimelineFilters({
-        ...currentProject,
-        clips: currentProject.clips.filter((clip) => clip.assetId !== request.assetId),
-        transitions: (currentProject.transitions || []).filter((transition) =>
-          !linkedClipIds.has(transition.fromClipId) && !linkedClipIds.has(transition.toClipId)
-        ),
-        removedAssetIds: [...new Set([...(currentProject.removedAssetIds || []), request.assetId])],
-      });
-      const nextSelection = restoreProjectSelection(nextProject, nextAssets, {
-        ...selectionRef.current,
-        ...(selectionRef.current.assetId === request.assetId ? { assetId: null } : {}),
-      });
-      await removeLocalMediaAndSaveProject(nextProject, nextAssets, request.assetId, nextSelection);
-
-      projectRef.current = nextProject;
-      assetsRef.current = nextAssets;
-      selectionRef.current = nextSelection;
-      persistedSnapshot.current = { project: nextProject, assets: nextAssets, selection: nextSelection };
-      commit(() => nextProject);
-      setAssets(nextAssets);
-      setSelectedClipId(nextSelection.clipId);
-      setSelectedAssetId(nextSelection.assetId);
-      setMediaRevision((revision) => revision + 1);
-      setSaveState('saved');
-      void readLocalProjects().then(setSavedProjects).catch(() => undefined);
-      setPendingMediaRemoval(null);
-      notify(`Removed “${request.name}” and ${linkedClips.length} linked timeline clip${linkedClips.length === 1 ? '' : 's'} from this project. The original file was not deleted.`);
+      const confirmed = await nativeConfirm({ fileName: request.name, clipCount: request.clipCount });
+      if (confirmed) await performMediaRemoval(request);
+    } catch (error) {
+      setPendingMediaRemoval(request);
+      notify(error instanceof Error ? `Native confirmation was unavailable (${error.message}). Review the in-app dialog to continue.` : 'Native confirmation was unavailable. Review the in-app dialog to continue.', true);
+    } finally {
+      mediaRemovalBusyRef.current = false;
+      setMediaRemovalBusy(false);
+    }
+  };
+  const confirmMediaRemoval = async () => {
+    const request = pendingMediaRemoval;
+    if (!request || mediaRemovalBusyRef.current) return;
+    mediaRemovalBusyRef.current = true;
+    setMediaRemovalBusy(true);
+    try {
+      await performMediaRemoval(request);
     } catch (error) {
       notify(error instanceof Error ? `Could not remove this media safely: ${error.message}` : 'Could not remove this media safely.', true);
     } finally {
+      mediaRemovalBusyRef.current = false;
       setMediaRemovalBusy(false);
     }
   };
@@ -2833,7 +2913,10 @@ function Home() {
   };
 
   const exportCut = async () => {
+    if (exportInProgress.current) return;
     if (!project.clips.length) { notify('Add a clip to the timeline before exporting.', true); return; }
+    const exportProjectId = project.id;
+    exportInProgress.current = true;
     const end = Math.max(
       ...project.clips.map((clip) => clip.timelineStart + getClipDuration(clip)),
       ...(project.markups || []).map((drawing) => drawing.end),
@@ -2884,12 +2967,19 @@ function Home() {
         const estimatedBytes = end * (exportBitrate + 128_000) / 8;
         if (end > 30 || estimatedBytes > 64 * 1024 * 1024) {
           notify('This browser cannot stream exports to disk. Use current Edge or Chrome with the Save File dialog, or shorten the cut to 30 seconds or less before using the in-memory fallback.', true);
+          exportInProgress.current = false;
           return;
         }
       }
     } catch (error) {
+      exportInProgress.current = false;
       if (error instanceof DOMException && error.name === 'AbortError') return;
       notify(`Could not open an export file: ${error instanceof Error ? error.message : 'browser file access was denied'}`, true);
+      return;
+    }
+    if (projectRef.current.id !== exportProjectId) {
+      exportInProgress.current = false;
+      notify('The active project changed while choosing an export destination. No export was started.', true);
       return;
     }
     if (baseName !== sanitizeExportBaseName(exportName)) {
@@ -3126,6 +3216,9 @@ function Home() {
           : `Rendered ${fileHandle?.name || outputFileName} to the location selected in the browser`;
       }
       const currentProject = projectRef.current;
+      if (currentProject.id !== exportProjectId) {
+        throw new Error('The active project changed during export. The rendered file was not attached to another project.');
+      }
       const filename = fileHandle?.name || outputFileName;
       const exportRecord = {
         id: uid(),
@@ -3173,6 +3266,7 @@ function Home() {
       }
       if (exportCanvas) { exportCanvas.width = 0; exportCanvas.height = 0; }
       exportStartedAt.current = null;
+      exportInProgress.current = false;
       setExporting(false);
       setExportProgress(0);
     }
@@ -3855,13 +3949,46 @@ function Home() {
           <div className="project-library__folder-strip" aria-label="Project folders">
             <button type="button" className={selectedProjectFolder === 'all' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('all')}><FolderOpen size={13} />All projects <span>{savedProjects.length}</span></button>
             <button type="button" className={selectedProjectFolder === 'unorganized' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('unorganized')}><Folder size={13} />Unorganized <span>{savedProjects.filter((record) => !record.project.folderId).length}</span></button>
-            {projectFolders.map((folder) => <div className={`project-library__folder-chip${selectedProjectFolder === folder.id ? ' is-selected' : ''}`} key={folder.id}>
-              <button type="button" className="project-library__folder-select" onClick={() => setSelectedProjectFolder(folder.id)} aria-pressed={selectedProjectFolder === folder.id}>
-                <Folder size={13} /><span>{folder.name}</span><small>{savedProjects.filter((record) => record.project.folderId === folder.id).length}</small>
-              </button>
-              <button type="button" className="project-library__folder-action" title={`Rename ${folder.name}`} aria-label={`Rename folder ${folder.name}`} onClick={() => void renameProjectFolder(folder)}><Pencil size={12} /></button>
-              <button type="button" className="project-library__folder-action is-delete" title={`Delete ${folder.name}`} aria-label={`Delete folder ${folder.name}`} onClick={() => void deleteProjectFolder(folder)}><Trash2 size={12} /></button>
-            </div>)}
+            {projectFolders.map((folder) => {
+              const folderProjects = savedProjects
+                .filter((record) => record.project.folderId === folder.id)
+                .sort((a, b) => b.savedAt - a.savedAt);
+              const expanded = expandedProjectFolders.has(folder.id);
+              return <div className={`project-library__folder-chip${selectedProjectFolder === folder.id ? ' is-selected' : ''}${expanded ? ' has-expanded' : ''}`} key={folder.id}>
+                <div className="project-library__folder-chip-main">
+                  <button type="button" className="project-library__folder-select" onClick={() => setSelectedProjectFolder(folder.id)} aria-pressed={selectedProjectFolder === folder.id}>
+                    <Folder size={13} /><span>{folder.name}</span><small>{folderProjects.length}</small>
+                  </button>
+                  <button
+                    type="button"
+                    className={`project-library__folder-expand${expanded ? ' is-expanded' : ''}`}
+                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${folder.name}`}
+                    aria-expanded={expanded}
+                    title={`${expanded ? 'Collapse' : 'Expand'} ${folder.name}`}
+                    onClick={() => setExpandedProjectFolders((current) => {
+                      const next = new Set(current);
+                      if (next.has(folder.id)) next.delete(folder.id);
+                      else next.add(folder.id);
+                      return next;
+                    })}
+                  ><ChevronDown size={12} /></button>
+                  <button type="button" className="project-library__folder-action" title={`Rename ${folder.name}`} aria-label={`Rename folder ${folder.name}`} onClick={() => void renameProjectFolder(folder)}><Pencil size={12} /></button>
+                  <button type="button" className="project-library__folder-action is-delete" title={`Delete ${folder.name}`} aria-label={`Delete folder ${folder.name}`} onClick={() => void deleteProjectFolder(folder)}><Trash2 size={12} /></button>
+                </div>
+                {expanded && <div className="project-library__folder-projects" role="list" aria-label={`${folder.name} projects`}>
+                  {folderProjects.length ? folderProjects.map((record) => <div role="listitem" key={record.project.id}>
+                    <button
+                      type="button"
+                      onClick={() => void openProject(record)}
+                      data-testid={`button-open-folder-project-${record.project.id}`}
+                    >
+                      <span>{record.project.name}</span>
+                      <small>{new Date(record.savedAt).toLocaleDateString()} · {record.project.clips.length} clips</small>
+                    </button>
+                  </div>) : <span className="project-library__folder-empty">No projects in this folder yet.</span>}
+                </div>}
+              </div>;
+            })}
           </div>
           <div className="project-library__tools">
             <label className="search-box"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>

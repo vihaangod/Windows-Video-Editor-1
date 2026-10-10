@@ -1,0 +1,30 @@
+## Cutline Editor — Smart Tracks, Media Upload & Full Transitions
+
+Inspect the existing timeline, project data model, transition engine, preview renderer, and export pipeline before making changes. Implement everything in the actual editor, preserving the dark-and-gold UI and all existing features.
+
+### 1. Separate Tracks & Smart Upload
+- Add a dedicated **Clips track** for videos, keeping audio on separate A1/A2 tracks and text, filters, and transitions on their appropriate tracks.
+- Add a compact **+ upload button** beside each track's existing controls, with suitable tooltips.
+- On the Clips track, open a video-only file picker; on audio tracks, open an audio-only picker. Validate formats and reject incompatible files with a clear message.
+- Support multiple-file imports, adding them sequentially at the playhead without replacing or overlapping existing clips unintentionally.
+- Import files into the current project's Media Library and selected timeline track. Never create a new project or clear the existing timeline. Keep the normal Import Media feature working.
+
+### 2. Dedicated Transitions Track
+- Create a dynamic **Transitions track** when the first transition is added; remove or hide it when all transitions are deleted, following existing track conventions.
+- Support transitions on a single clip (**entrance and exit**) and between adjacent clips (**between-clips**). Clearly distinguish these modes.
+- Include Fade, Slide, Wipe, Zoom, and Cross Dissolve where appropriate. Directional effects must support Left, Right, Up, and Down.
+- Display transition blocks at their actual timeline positions, showing the effect name and duration when space allows. Allow selection, valid repositioning, duplication, and deletion.
+- Right-clicking a transition block must open a custom context menu with **Edit Duration, Change Transition, Change Direction, Duplicate, and Delete**. Disable irrelevant options when necessary. Duration must be editable in seconds, validated, and reflected immediately in the timeline, preview, and export.
+
+### 3. Preview, Export & Editing Accuracy
+- Implement real transition animations in both timeline preview and final exported video, with matching timing, direction, and duration across 16:9, 9:16, 4:5, and 1:1 aspect ratios.
+- Keep transitions correctly attached to their target clips when clips are trimmed, split, moved, or deleted. Validate durations when clips are shortened and prevent invalid transition placements.
+- Do not modify original media files or break existing audio, text, filters, or editing tools.
+
+### 4. Saving, Compatibility & Testing
+- Persist imported media references, track assignments, clip positions, transition settings, and project state. Restore them correctly after refresh or reopening the Electron desktop app.
+- Maintain compatibility with existing projects and prevent clips from disappearing or changing position.
+- Support both browser and Electron file-import workflows securely. Keep actual video files local unless the existing architecture explicitly supports cloud media storage; save project metadata and timeline state to the current project.
+- Test video/audio uploads, multiple files, invalid formats, existing-project preservation, single-clip entrance/exit, between-clip transitions, duration/direction/type changes, context-menu actions, preview/export consistency, and save/restore.
+
+**Important:** Inspect the existing architecture and reuse its current components and data models. Implement functional features, not UI-only mockups or placeholder buttons. Do not overwrite unrelated files or break working functionality. Run available type checks/build/tests and report what actually passed, what failed, and what remains incomplete. If any feature cannot be completed reliably, explain why instead of claiming it works.

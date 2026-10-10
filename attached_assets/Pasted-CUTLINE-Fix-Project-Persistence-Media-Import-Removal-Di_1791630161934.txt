@@ -1,0 +1,275 @@
+CUTLINE — Fix Project Persistence, Media Import, Removal Dialogs, and Project Library
+
+Inspect the existing Cutline codebase and fix the following bugs in the actual application. These fixes must work in both the browser version and the Electron desktop app.
+
+**Important:** Do not rebuild the application from scratch, delete existing projects, or break the current timeline, filters, effects, transitions, titles, audio, or export features. Fix the underlying state management, project storage, and UI logic.
+
+## 1. Fix Selected Item Highlighting After Reload
+
+Currently, when I select an item, it gets a green background or selection highlight. After refreshing the website, the highlight disappears.
+
+Investigate why the selected state is lost after a reload.
+
+Requirements:
+- Persist the appropriate selection state when necessary.
+- Restore the selected item's highlight when the project is reopened or the application restarts, provided that the item still exists.
+- Use stable item IDs instead of array indexes or temporary component state.
+- Make selection highlighting consistent across the browser and Electron versions.
+- If the selected item has been deleted or is no longer valid, clear the selection safely.
+- Do not restore temporary hover states or accidental stale selections.
+- Ensure selection styling is applied from the actual application state, not just a CSS class that disappears after rendering.
+
+The selection colour and existing dark-and-gold theme must remain consistent.
+
+Test by selecting an item, saving, refreshing the browser, reopening the project, and restarting the Electron app.
+
+## 2. Fix New Project Creation and Media Import
+
+Currently, I can edit an existing project with text, audio clips, transitions, filters, and other edits. When I try to upload a new video for a different project, the existing projects may still appear in the Media Library, but the new project is not actually created. It looks like the uploaded clip is being added to the existing workflow instead of creating a separate project.
+
+Fix this behaviour.
+
+### New Project Workflow
+
+Create a clear distinction between:
+- Creating a new project
+- Opening an existing project
+- Importing media into the currently open project
+
+When I click **New Project**:
+1. Create a genuinely new project with a unique project ID.
+2. Ask for a project name and optional folder selection.
+3. Initialise a clean timeline and empty project-specific Media Library.
+4. Do not copy the previous project's timeline, text, audio, transitions, effects, filters, or other edits.
+5. Switch the editor's active project to the newly created project.
+6. Save the new project in the project library.
+7. Allow me to import a video and start editing it.
+
+When I open an existing project:
+- Restore its saved timeline, text, audio, transitions, filters, effects, aspect ratio, transforms, and other settings.
+- Do not mix its data with another project.
+
+### Importing Media
+
+When I click **+ Add Media / Import Files** while editing a project:
+- Import the selected file into the active project's Media Library.
+- Do not automatically create a new project.
+- Do not switch to another project.
+- Do not replace existing timeline clips.
+- Let me add the imported media to the timeline separately.
+
+Every project must have its own media references and timeline state, even if two projects use the same original source file.
+
+### State Management
+
+Investigate whether the bug is caused by a shared global timeline, stale React state, incorrect project IDs, or a project creation function that only imports media without creating a new project.
+
+Use a single, reliable active-project state. All editing actions must update the currently active project only.
+
+Do not allow project data to leak between projects.
+
+## 3. Fix Media Removal Confirmation for Electron
+
+Currently, removing media shows a browser-style confirmation similar to:
+
+"Remove '[filename]' and its 1 timeline clip from this project? The source file on your computer will not be deleted."
+
+This confirmation must behave correctly in both the browser and the Electron desktop app.
+
+### Browser Version
+
+Keep a clear confirmation dialog that explains:
+- Which media file will be removed.
+- How many timeline clips reference that media.
+- That removal affects the current project.
+- That the original source file will not be deleted from the user's computer.
+
+### Electron Desktop Version
+
+Implement an appropriate native Electron confirmation dialog using the existing secure Electron architecture where possible.
+
+Requirements:
+- Use Electron's native dialog API through a secure preload/contextBridge and IPC implementation, if that is how the current application is structured.
+- Do not expose unrestricted Node.js APIs to the renderer.
+- Do not enable nodeIntegration merely to make the dialog work.
+- Ensure the native confirmation opens only when the user explicitly requests removal.
+- Show the correct filename and number of affected timeline clips.
+- Provide clear Cancel and Remove actions.
+- Cancel must leave the project and timeline unchanged.
+- Remove must remove the media reference and handle associated timeline clips according to the confirmed action.
+- Never delete the original source file from the computer unless a separate, explicitly confirmed file-deletion feature exists.
+
+Do not use `window.confirm()` as the only confirmation mechanism in the Electron app if a proper native dialog can be implemented safely.
+
+If Electron's native dialog is unavailable in a particular environment, fall back to a custom confirmation modal instead of crashing.
+
+### Safe Removal Behaviour
+
+When a file is used by multiple timeline clips:
+- Show the actual number of affected clips.
+- Explain what will happen to those clips.
+- Do not leave broken references or invisible timeline objects.
+- Preserve unrelated clips, tracks, text, audio, effects, and transitions.
+- Ensure Cancel performs no changes.
+- Ensure Remove updates the project state, Media Library, and autosave consistently.
+
+## 4. Replace the Empty Media Library Landing State with a Project Library
+
+Currently, a new or reopened project may display something like:
+
+"Media — 0 ITEMS"
+
+"Bring in your first clip"
+
+"Import files from this PC"
+
+This is appropriate only when the currently open project genuinely has no imported media.
+
+I want a better landing experience for returning users who have already created projects and exported videos.
+
+### Landing Screen Design
+
+When the user opens Cutline without an active editing project, display a **Project Library / Project Folders** section instead of always presenting the empty Media Library message.
+
+Show:
+- Existing project folders.
+- Existing projects inside those folders.
+- Project names.
+- Last edited date where available.
+- Last export information where available.
+- A clear Open / Continue Editing action.
+- A New Project button.
+- An Import Media option for starting a new project.
+
+### Expandable Project Folders
+
+When I click a project folder:
+- Expand or collapse that folder.
+- Display all projects belonging to it in a dropdown-style list.
+- Allow me to select a project and open it for editing.
+- Preserve the folder's expanded state where practical.
+
+Do not confuse this dropdown with the Media Library inside an open project.
+
+### Media Library Behaviour
+
+When a project is open:
+- Show that project's imported media.
+- If it has no imported media, show "Bring in your first clip" and "Import files from this PC".
+- If it already has media, show its actual media items.
+- Do not show other projects' media as though they belong to the current project.
+
+When no project is open:
+- Show the Project Library and existing folders/projects.
+- Do not incorrectly display the empty-media message as the main landing screen when saved projects exist.
+
+If there are no saved projects at all, show a useful first-time welcome state with New Project and Import Media actions.
+
+## 5. Saving Exports with Their Projects
+
+I want an organised workflow where exported videos are associated with the project they came from.
+
+When I export a video:
+- Save it to the selected export destination.
+- Default to the current project's folder when appropriate.
+- Add the export to that project's export history.
+- Display the export filename, date, and destination when available.
+- Do not automatically create a new editing project just because I exported a video.
+- Do not replace the original project with the exported video.
+- Do not silently overwrite an existing export.
+
+When I return to Cutline later, I should be able to find the project, reopen it, edit it again, and export another version.
+
+An exported video must not be treated as a complete editable project unless a genuine project file is explicitly created.
+
+### Project Folder Organisation
+
+Use the existing project folder architecture and adapt it if needed. Logically organise:
+- Project metadata and timeline data.
+- Imported media references.
+- Export history and exported videos.
+
+Do not assume the browser can create real folders on the computer. Use browser storage and downloads where necessary, and use actual filesystem operations only where supported and permitted.
+
+In Electron, use the application's existing secure filesystem layer and keep project data associated with the correct folder.
+
+Preserve the existing maximum of 10 user-created project folders. This limit must apply to folders, not to the number of projects.
+
+## 6. Browser and Electron Compatibility
+
+Implement these behaviours in both environments.
+
+### Browser
+- Use the existing browser storage architecture, such as IndexedDB, where appropriate.
+- Persist project data and selection state reliably.
+- Handle refreshes and reopening correctly.
+- Do not assume local files remain accessible without the appropriate browser permissions or relinking.
+- Show clear errors if a save fails.
+
+### Electron Desktop
+- Use the existing secure filesystem and IPC architecture.
+- Persist project data outside temporary renderer state.
+- Restore projects correctly after closing and reopening the desktop app.
+- Use native dialogs where appropriate, with safe fallbacks.
+- Avoid exposing unrestricted filesystem access to the renderer.
+- Ensure the development build and packaged desktop application use consistent project storage logic.
+- Do not rely exclusively on browser localStorage for essential desktop project persistence.
+
+Use stable project IDs and media IDs. Avoid deriving identity from filenames alone because two files can have the same name.
+
+## 7. Backward Compatibility and Data Safety
+
+- Preserve existing saved projects and their edits.
+- Migrate older project data safely if the storage schema needs to change.
+- Do not reset or delete existing project folders.
+- Handle missing or invalid media references gracefully.
+- Avoid duplicate projects caused by refreshes or repeated imports.
+- Ensure autosave does not overwrite a different project's data.
+- Make sure switching projects saves the previous project before loading the next one, where appropriate.
+- Prevent stale asynchronous saves from overwriting a newer active project.
+- Keep undo/redo history scoped to the appropriate project.
+
+## 8. Required Tests
+
+Run and verify the following workflows.
+
+### Selection Persistence
+1. Select an item and confirm its green highlight appears.
+2. Save and refresh the browser.
+3. Reopen the same project and verify the correct highlight is restored when appropriate.
+4. Restart the Electron app and repeat.
+5. Delete the selected item and confirm stale selection is cleared safely.
+
+### Separate Projects
+6. Create Project A and add videos, titles, audio, filters, and transitions.
+7. Save Project A.
+8. Create Project B.
+9. Confirm Project B starts with a clean timeline and independent Media Library.
+10. Import a new video into Project B.
+11. Confirm Project A remains unchanged.
+12. Switch back to Project A and verify all previous edits remain intact.
+
+### Removal Confirmation
+13. Attempt to remove media used by one timeline clip.
+14. Verify the correct filename and clip count are shown.
+15. Cancel and verify nothing changes.
+16. Confirm removal and verify only the intended media reference and associated clips are removed.
+17. Repeat with media referenced by multiple clips.
+18. Verify the original source file is not deleted.
+19. Test browser confirmation and Electron native/fallback confirmation separately.
+
+### Project Library and Export
+20. Verify existing folders and projects appear on the landing screen.
+21. Expand a folder and open an existing project.
+22. Confirm the empty Media Library message appears only when appropriate.
+23. Export a video and verify the export is associated with the correct source project.
+24. Reopen that project and confirm all editing data remains available.
+25. Verify the 10-folder limit and confirm that projects are not limited to 10.
+
+Run available build checks and relevant tests. Report actual results, including any tests that could not run.
+
+## Final Instruction
+
+Fix these issues in the existing Cutline codebase before adding unrelated new features. Focus on correct project identity, persistent state, independent timelines, safe removal, and a project library that works in both browser and Electron.
+
+Do not claim success unless the relevant workflows have actually been tested. Do not remove existing functionality or destroy saved user data.

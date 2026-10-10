@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getActiveTimelineFilters, getPreviewCanvasSize, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
+import { getActiveTimelineFilters, getPreviewCanvasSize, removeAssetReferencesFromProject, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -138,4 +138,37 @@ test('saved selections restore by stable IDs and stale IDs are cleared', () => {
     restoreProjectSelection(project, assets, { clipId: 'deleted-clip', assetId: 'deleted-asset' }),
     { clipId: null, assetId: null },
   );
+});
+
+test('removing media clears only its clips and linked effects while preserving unrelated timeline content', () => {
+  const project: Project = {
+    id: 'removal-test',
+    name: 'Safe media removal',
+    width: 1920,
+    height: 1080,
+    frameRate: 30,
+    tracks: [
+      { id: 'video', name: 'Video 1', kind: 'video', order: 0, muted: false },
+      { id: 'audio', name: 'Audio 1', kind: 'audio', order: 1, muted: false },
+      { id: 'effects', name: 'Effects 1', kind: 'effects', order: 2, muted: false },
+    ],
+    clips: [
+      { id: 'removed-clip-1', assetId: 'removed-asset', trackId: 'video', timelineStart: 0, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+      { id: 'removed-clip-2', assetId: 'removed-asset', trackId: 'video', timelineStart: 2, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+      { id: 'unrelated-clip', assetId: 'kept-asset', trackId: 'video', timelineStart: 4, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+      { id: 'unrelated-audio', assetId: 'audio-asset', trackId: 'audio', timelineStart: 0, sourceIn: 0, sourceOut: 3, volume: 1, speed: 1, audioOnly: true },
+      { id: 'linked-filter', trackId: 'effects', timelineStart: 0, sourceIn: 0, sourceOut: 2, volume: 0, speed: 1, filterEffect: { presetId: 'cinematic', intensity: 50, targetClipId: 'removed-clip-1' } },
+    ],
+    transitions: [
+      { id: 'removed-transition', fromClipId: 'removed-clip-1', toClipId: 'unrelated-clip', type: 'cross-dissolve', duration: 0.5 },
+      { id: 'kept-transition', fromClipId: 'unrelated-audio', toClipId: 'unrelated-clip', type: 'wipe', duration: 0.3 },
+    ],
+  };
+
+  const next = removeAssetReferencesFromProject(project, 'removed-asset');
+
+  assert.deepEqual(next.clips.map((clip) => clip.id), ['unrelated-clip', 'unrelated-audio']);
+  assert.deepEqual(next.transitions?.map((transition) => transition.id), ['kept-transition']);
+  assert.deepEqual(next.removedAssetIds, ['removed-asset']);
+  assert.equal(project.clips.length, 5, 'the original project is unchanged');
 });
