@@ -3,6 +3,7 @@ import {
   Pencil, Redo2, Square, Trash2, Type, Undo2,
 } from 'lucide-react';
 import type { MarkupDrawing, MarkupTool } from '@/lib/composition';
+import CutlineSelect from '@/components/CutlineSelect';
 
 type Props = {
   tool: MarkupTool | 'eraser';
@@ -121,9 +122,13 @@ export default function MarkupWorkspace(props: Props) {
         </label>
         <label className="cutline-markup__field">
           <span>Line style</span>
-          <select value={props.lineStyle} onChange={(event) => props.onLineStyle(event.currentTarget.value as MarkupDrawing['lineStyle'])} aria-label="Markup line style" data-testid="select-markup-line-style">
-            <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
-          </select>
+          <CutlineSelect
+            value={props.lineStyle}
+            options={[{ value: 'solid', label: 'Solid' }, { value: 'dashed', label: 'Dashed' }, { value: 'dotted', label: 'Dotted' }]}
+            onValueChange={(value) => props.onLineStyle(value as MarkupDrawing['lineStyle'])}
+            aria-label="Markup line style"
+            data-testid="select-markup-line-style"
+          />
         </label>
       </div>
 

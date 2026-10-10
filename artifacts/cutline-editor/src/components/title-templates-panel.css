@@ -131,7 +131,7 @@
   gap: 12px;
   overflow: auto;
   padding: 14px 14px 18px;
-  scrollbar-color: #414751 transparent;
+  scrollbar-color: hsl(var(--primary)) hsl(var(--background));
   scrollbar-width: thin;
 }
 

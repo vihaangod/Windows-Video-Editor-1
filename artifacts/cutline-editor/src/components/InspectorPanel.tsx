@@ -1,4 +1,5 @@
 import './inspector-panel.css';
+import CutlineSelect from '@/components/CutlineSelect';
 import { DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Clip, type ClipEffects, type ClipTransform, type TextBackgroundStyle, type TextOverlay } from '@/lib/composition';
 
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text'> & {
@@ -302,9 +303,20 @@ export default function InspectorPanel({
           </label>
           <label className="cutline-inspector__field" htmlFor={`select-title-weight-${clip.id}`}>
             <span className="cutline-inspector__field-label">Weight</span>
-            <select id={`select-title-weight-${clip.id}`} className="cutline-inspector__select" value={clip.text.fontWeight} disabled={disabled} data-testid="select-title-weight" onChange={(event) => onChange({ text: { fontWeight: Number(event.currentTarget.value) } })}>
-              <option value="400">Regular</option><option value="500">Medium</option><option value="700">Bold</option><option value="900">Heavy</option>
-            </select>
+            <CutlineSelect
+              id={`select-title-weight-${clip.id}`}
+              className="cutline-inspector__select"
+              value={String(clip.text.fontWeight)}
+              options={[
+                { value: '400', label: 'Regular' },
+                { value: '500', label: 'Medium' },
+                { value: '700', label: 'Bold' },
+                { value: '900', label: 'Heavy' },
+              ]}
+              disabled={disabled}
+              data-testid="select-title-weight"
+              onValueChange={(value) => onChange({ text: { fontWeight: Number(value) } })}
+            />
           </label>
         </div>
         <div className="cutline-inspector__fields">
@@ -314,9 +326,15 @@ export default function InspectorPanel({
           </label>
           <label className="cutline-inspector__field" htmlFor={`select-title-align-${clip.id}`}>
             <span className="cutline-inspector__field-label">Alignment</span>
-            <select id={`select-title-align-${clip.id}`} className="cutline-inspector__select" value={clip.text.align} disabled={disabled} data-testid="select-title-align" onChange={(event) => onChange({ text: { align: event.currentTarget.value as TextOverlay['align'] } })}>
-              <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
-            </select>
+            <CutlineSelect
+              id={`select-title-align-${clip.id}`}
+              className="cutline-inspector__select"
+              value={clip.text.align}
+              options={[{ value: 'left', label: 'Left' }, { value: 'center', label: 'Center' }, { value: 'right', label: 'Right' }]}
+              disabled={disabled}
+              data-testid="select-title-align"
+              onValueChange={(value) => onChange({ text: { align: value as TextOverlay['align'] } })}
+            />
           </label>
         </div>
         <label className="cutline-inspector__field cutline-inspector__field--spaced" htmlFor={`input-title-background-${clip.id}`}>
@@ -371,15 +389,27 @@ export default function InspectorPanel({
         <div className="cutline-inspector__fields">
           <label className="cutline-inspector__field" htmlFor={`select-title-background-align-x-${clip.id}`}>
             <span className="cutline-inspector__field-label">Background horizontal anchor</span>
-            <select id={`select-title-background-align-x-${clip.id}`} className="cutline-inspector__select" value={backgroundStyle.alignX ?? clip.text.align} disabled={disabled} data-testid="select-title-background-align-x" onChange={(event) => updateBackground({ alignX: event.currentTarget.value as TextBackgroundStyle['alignX'] })}>
-              <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
-            </select>
+            <CutlineSelect
+              id={`select-title-background-align-x-${clip.id}`}
+              className="cutline-inspector__select"
+              value={backgroundStyle.alignX ?? clip.text.align}
+              options={[{ value: 'left', label: 'Left' }, { value: 'center', label: 'Center' }, { value: 'right', label: 'Right' }]}
+              disabled={disabled}
+              data-testid="select-title-background-align-x"
+              onValueChange={(value) => updateBackground({ alignX: value as TextBackgroundStyle['alignX'] })}
+            />
           </label>
           <label className="cutline-inspector__field" htmlFor={`select-title-background-align-y-${clip.id}`}>
             <span className="cutline-inspector__field-label">Background vertical anchor</span>
-            <select id={`select-title-background-align-y-${clip.id}`} className="cutline-inspector__select" value={backgroundStyle.alignY ?? 'center'} disabled={disabled} data-testid="select-title-background-align-y" onChange={(event) => updateBackground({ alignY: event.currentTarget.value as TextBackgroundStyle['alignY'] })}>
-              <option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option>
-            </select>
+            <CutlineSelect
+              id={`select-title-background-align-y-${clip.id}`}
+              className="cutline-inspector__select"
+              value={backgroundStyle.alignY ?? 'center'}
+              options={[{ value: 'top', label: 'Top' }, { value: 'center', label: 'Center' }, { value: 'bottom', label: 'Bottom' }]}
+              disabled={disabled}
+              data-testid="select-title-background-align-y"
+              onValueChange={(value) => updateBackground({ alignY: value as TextBackgroundStyle['alignY'] })}
+            />
           </label>
         </div>
         <div className="cutline-inspector__fields">

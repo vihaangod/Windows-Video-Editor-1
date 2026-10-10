@@ -13,6 +13,7 @@ import {
 } from 'mediabunny';
 import NotFound from '@/pages/not-found';
 import ContextMenu, { type ContextMenuItem } from '@/components/ContextMenu';
+import CutlineSelect from '@/components/CutlineSelect';
 import EffectWorkspace from '@/components/EffectWorkspace';
 import InspectorPanel from '@/components/InspectorPanel';
 import MarkupWorkspace from '@/components/MarkupWorkspace';
@@ -1982,8 +1983,11 @@ function Home() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
+      if (event.defaultPrevented) return;
       const editing = target instanceof HTMLElement && (
-        target.isContentEditable || target.matches('input, textarea, select')
+        target.isContentEditable ||
+        target.matches('input, textarea, select') ||
+        target.closest('[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [data-radix-popper-content-wrapper]')
       );
       if (editing) return;
       if (contextMenu) return;
@@ -2532,12 +2536,29 @@ function Home() {
             <button className="icon-btn" title="Delete selected clip" onClick={removeSelected} disabled={!selectedClip || selectedClipLocked} data-testid="button-delete-clip"><Trash2 size={15} /></button>
             <span className="divider" />
             <label>Canvas</label>
-            <select aria-label="Project resolution" value={`${project.width}x${project.height}`} onChange={(event) => { const [width, height] = event.target.value.split('x').map(Number); commit((current) => ({ ...current, width, height })); }} data-testid="select-resolution">
-              <option value="3840x2160">2160p · 4K</option><option value="2560x1440">1440p</option><option value="1920x1080">1080p</option><option value="1280x720">720p</option><option value="854x480">480p</option>
-            </select>
-            <select aria-label="Project frame rate" value={project.frameRate} onChange={(event) => commit((current) => ({ ...current, frameRate: Number(event.target.value) }))} data-testid="select-frame-rate">
-              <option value={24}>24 fps</option><option value={30}>30 fps</option><option value={60}>60 fps</option><option value={120}>120 fps</option>
-            </select>
+            <CutlineSelect
+              aria-label="Project resolution"
+              value={`${project.width}x${project.height}`}
+              options={[
+                { value: '3840x2160', label: '2160p · 4K' },
+                { value: '2560x1440', label: '1440p' },
+                { value: '1920x1080', label: '1080p' },
+                { value: '1280x720', label: '720p' },
+                { value: '854x480', label: '480p' },
+              ]}
+              onValueChange={(value) => {
+                const [width, height] = value.split('x').map(Number);
+                commit((current) => ({ ...current, width, height }));
+              }}
+              data-testid="select-resolution"
+            />
+            <CutlineSelect
+              aria-label="Project frame rate"
+              value={String(project.frameRate)}
+              options={[24, 30, 60, 120].map((fps) => ({ value: String(fps), label: `${fps} fps` }))}
+              onValueChange={(value) => commit((current) => ({ ...current, frameRate: Number(value) }))}
+              data-testid="select-frame-rate"
+            />
             <span className="divider" />
             <div className="preview-zoom-tools" role="group" aria-label="Preview zoom">
               <button type="button" className={previewZoom === 'fit' ? 'active' : ''} aria-pressed={previewZoom === 'fit'} onClick={() => setPreviewZoom('fit')} data-testid="button-preview-fit">Fit</button>
@@ -2762,7 +2783,16 @@ function Home() {
           </div>
           <div className="project-library__tools">
             <label className="search-box"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>
-            <label className="project-library__sort"><span>Sort</span><select aria-label="Sort projects" value={projectSort} onChange={(event) => setProjectSort(event.currentTarget.value as 'modified' | 'name')} data-testid="select-sort-projects"><option value="modified">Recently modified</option><option value="name">Name</option></select></label>
+            <label className="project-library__sort">
+              <span>Sort</span>
+              <CutlineSelect
+                aria-label="Sort projects"
+                value={projectSort}
+                options={[{ value: 'modified', label: 'Recently modified' }, { value: 'name', label: 'Name' }]}
+                onValueChange={(value) => setProjectSort(value as 'modified' | 'name')}
+                data-testid="select-sort-projects"
+              />
+            </label>
           </div>
           <div className="project-library__list">
             {visibleSavedProjects.length ? visibleSavedProjects.map((record) => {
@@ -2813,7 +2843,18 @@ function Home() {
         <section className="dialog" aria-label="Export project">
           <h2>Export your cut</h2><p>Rendered on this device with WebCodecs. Cutline checks the selected browser encoders before rendering; no FFmpeg engine or cloud service is used.</p>
           <label htmlFor="export-name">File name</label><input id="export-name" value={exportName} onChange={(event) => setExportName(event.target.value)} disabled={exporting} data-testid="input-export-name" />
-          <label htmlFor="export-format">Format</label><select id="export-format" value={format} onChange={(event) => setFormat(event.target.value as 'mp4' | 'webm')} disabled={exporting} data-testid="select-export-format"><option value="mp4">MP4 · AVC video + AAC audio</option><option value="webm">WebM · VP8 video + Opus audio</option></select>
+          <label htmlFor="export-format">Format</label>
+          <CutlineSelect
+            id="export-format"
+            value={format}
+            options={[
+              { value: 'mp4', label: 'MP4 · AVC video + AAC audio' },
+              { value: 'webm', label: 'WebM · VP8 video + Opus audio' },
+            ]}
+            onValueChange={(value) => setFormat(value as 'mp4' | 'webm')}
+            disabled={exporting}
+            data-testid="select-export-format"
+          />
           <p style={{ marginBottom: 0 }}>Output: {project.width} × {project.height} at {project.frameRate} fps. Large renders stream to disk when File System Access is available. Without it, the in-memory fallback is limited to 30 seconds and an estimated 64 MB.</p>
           {exporting && <>
             <div className="export-progress-meta"><span>Elapsed {formatElapsedTime(exportElapsed)}</span><span>{exportProgress}%</span></div>
