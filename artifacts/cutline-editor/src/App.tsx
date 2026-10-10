@@ -23,7 +23,14 @@ import {
   getTextOverlayBounds, renderProjectFrame, type Asset, type AssetMetadata, type Clip, type ClipEffects,
   getPreviewCanvasSize, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type SavedProject, type TextOverlay, type Track, type TrackKind,
 } from '@/lib/composition';
-import { getExportFrameCount, getExportProgress, getExportVideoBitrate } from '@/lib/export-utils';
+import {
+  getExportFrameCount,
+  getExportProgress,
+  getExportVideoBitrate,
+  getUniqueExportBaseName,
+  sanitizeExportBaseName,
+} from '@/lib/export-utils';
+import { getProjectFolderNameError, getProjectNameError, MAX_PROJECT_FOLDERS } from '@/lib/project-library-utils';
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
 import cutlineAppIcon from '@/assets/cutline-app-icon.svg';
 import {
@@ -34,12 +41,33 @@ import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
 const DB_NAME = 'cutline-local-editor-v1';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const LEGACY_STORE = 'projects';
 const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
+const MEDIA_BLOB_STORE = 'media-blobs';
 const FOLDER_STORE = 'project-folders';
-const MAX_PROJECT_FOLDERS = 10;
+type StoredMediaRecord = { key: string; projectId: string; asset: AssetMetadata; blobId: string };
+type StoredMediaBlob = { id: string; blob: Blob };
+type WritableFile = {
+  write: (chunk: { type: 'write'; position: number; data: Uint8Array }) => Promise<void>;
+  close: () => Promise<void>;
+  abort: (reason?: unknown) => Promise<void>;
+};
+type WritableFileHandle = { createWritable: () => Promise<unknown>; name?: string };
+type WritableDirectoryHandle = {
+  name: string;
+  getFileHandle: (name: string, options?: { create?: boolean }) => Promise<WritableFileHandle>;
+  queryPermission?: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
+  requestPermission?: (options: { mode: 'readwrite' }) => Promise<PermissionState>;
+};
+type FileAccessWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{ description: string; accept: Record<string, string[]> }>;
+  }) => Promise<WritableFileHandle>;
+  showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<WritableDirectoryHandle>;
+};
 const DEFAULT_TRACKS: Track[] = [
   { id: 'video-1', name: 'Video 1', kind: 'video', order: 0, muted: false, visible: true, locked: false },
   { id: 'audio-1', name: 'Audio 1', kind: 'audio', order: 1, muted: false, visible: true, locked: false },
@@ -132,8 +160,27 @@ function openDatabase(): Promise<IDBDatabase> {
       const media = db.objectStoreNames.contains(MEDIA_STORE)
         ? transaction!.objectStore(MEDIA_STORE)
         : db.createObjectStore(MEDIA_STORE, { keyPath: 'key' });
+      const mediaBlobs = db.objectStoreNames.contains(MEDIA_BLOB_STORE)
+        ? transaction!.objectStore(MEDIA_BLOB_STORE)
+        : db.createObjectStore(MEDIA_BLOB_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(FOLDER_STORE)) db.createObjectStore(FOLDER_STORE, { keyPath: 'id' });
       if (!media.indexNames.contains('projectId')) media.createIndex('projectId', 'projectId', { unique: false });
+      if (!media.indexNames.contains('blobId')) media.createIndex('blobId', 'blobId', { unique: false });
+      if (event.oldVersion < 4) {
+        const existingMedia = media.openCursor();
+        existingMedia.onsuccess = () => {
+          const cursor = existingMedia.result;
+          if (!cursor) return;
+          const record = cursor.value as { key: string; projectId: string; asset?: Asset; blobId?: string };
+          if (!record.blobId && record.asset?.blob) {
+            const blobId = `legacy:${record.key}`;
+            const { blob, ...metadata } = record.asset;
+            mediaBlobs.put({ id: blobId, blob });
+            cursor.update({ ...record, asset: metadata, blobId });
+          }
+          cursor.continue();
+        };
+      }
       if (event.oldVersion < 2 && db.objectStoreNames.contains(LEGACY_STORE)) {
         const cursorRequest = transaction!.objectStore(LEGACY_STORE).openCursor();
         cursorRequest.onsuccess = () => {
@@ -142,7 +189,13 @@ function openDatabase(): Promise<IDBDatabase> {
           const legacy = cursor.value as { project: Project; assets?: Asset[]; savedAt: number };
           if (legacy.project) {
             projects.put({ project: legacy.project, assets: (legacy.assets || []).map(({ blob: _blob, ...asset }) => asset), savedAt: legacy.savedAt || Date.now() });
-            for (const asset of legacy.assets || []) media.put({ key: `${legacy.project.id}:${asset.id}`, projectId: legacy.project.id, asset });
+            for (const asset of legacy.assets || []) {
+              const key = `${legacy.project.id}:${asset.id}`;
+              const blobId = `legacy:${key}`;
+              const { blob, ...metadata } = asset;
+              media.put({ key, projectId: legacy.project.id, asset: metadata, blobId });
+              mediaBlobs.put({ id: blobId, blob });
+            }
           }
           cursor.continue();
         };
@@ -171,12 +224,100 @@ async function saveLocalMedia(projectId: string, assets: Asset[]) {
   if (!assets.length) return;
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
+    const store = tx.objectStore(MEDIA_STORE);
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    for (const asset of assets) {
+      const key = `${projectId}:${asset.id}`;
+      const existingRequest = store.get(key);
+      existingRequest.onsuccess = () => {
+        const existing = existingRequest.result as StoredMediaRecord | undefined;
+        const { blob, ...metadata } = asset;
+        if (existing?.blobId) {
+          store.put({ key, projectId, asset: metadata, blobId: existing.blobId });
+          return;
+        }
+        const blobId = `${key}:${uid()}`;
+        blobs.put({ id: blobId, blob });
+        store.put({ key, projectId, asset: metadata, blobId });
+      };
+    }
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media save transaction was aborted.')); };
+  });
+}
+async function replaceLocalMedia(projectId: string, asset: Asset) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
+    const media = tx.objectStore(MEDIA_STORE);
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    const key = `${projectId}:${asset.id}`;
+    const previousRequest = media.get(key);
+    previousRequest.onsuccess = () => {
+      const previous = previousRequest.result as StoredMediaRecord | undefined;
+      const blobId = `${key}:replacement:${uid()}`;
+      const { blob, ...metadata } = asset;
+      blobs.put({ id: blobId, blob });
+      media.put({ key, projectId, asset: metadata, blobId });
+      if (previous?.blobId) {
+        const remaining = media.index('blobId').count(previous.blobId);
+        remaining.onsuccess = () => {
+          if (remaining.result === 0) blobs.delete(previous.blobId);
+        };
+      }
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media replacement transaction was aborted.')); };
+  });
+}
+async function copyLocalMedia(sourceProjectId: string, destinationProjectId: string) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
     const store = tx.objectStore(MEDIA_STORE);
-    assets.forEach((asset) => store.put({ key: `${projectId}:${asset.id}`, projectId, asset }));
+    const request = store.index('projectId').getAll(sourceProjectId);
+    request.onsuccess = () => {
+      for (const record of request.result as StoredMediaRecord[]) {
+        if (!record.blobId) {
+          tx.abort();
+          return;
+        }
+        const key = `${destinationProjectId}:${record.asset.id}`;
+        store.put({ ...record, key, projectId: destinationProjectId });
+      }
+    };
     tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media save transaction was aborted.')); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media references could not be copied.')); };
+  });
+}
+async function copyLocalMediaAsset(
+  sourceProjectId: string,
+  sourceAssetId: string,
+  destinationProjectId: string,
+  destinationAsset: Asset,
+) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, 'readwrite');
+    const store = tx.objectStore(MEDIA_STORE);
+    const sourceRequest = store.get(`${sourceProjectId}:${sourceAssetId}`);
+    sourceRequest.onsuccess = () => {
+      const source = sourceRequest.result as StoredMediaRecord | undefined;
+      if (!source?.blobId) {
+        tx.abort();
+        return;
+      }
+      const key = `${destinationProjectId}:${destinationAsset.id}`;
+      const { blob: _blob, ...metadata } = destinationAsset;
+      store.put({ key, projectId: destinationProjectId, asset: metadata, blobId: source.blobId });
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('The media file could not be shared.')); };
   });
 }
 async function readLocalProjects(): Promise<SavedProject[]> {
@@ -195,14 +336,64 @@ async function readLocalFolders(): Promise<ProjectFolder[]> {
     req.onerror = () => { db.close(); reject(req.error); };
   });
 }
-async function saveLocalFolder(folder: ProjectFolder) {
+async function createLocalFolder(folder: ProjectFolder) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(FOLDER_STORE, 'readwrite');
-    tx.objectStore(FOLDER_STORE).put(folder);
+    const store = tx.objectStore(FOLDER_STORE);
+    let validationError: Error | null = null;
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const folders = request.result as ProjectFolder[];
+      if (folders.length >= MAX_PROJECT_FOLDERS) {
+        validationError = new Error('Folder limit reached. Rename or delete a folder before creating another.');
+        tx.abort();
+        return;
+      }
+      const nameError = getProjectFolderNameError(folder.name, folders);
+      if (nameError) {
+        validationError = new Error(nameError);
+        tx.abort();
+        return;
+      }
+      store.add(folder);
+    };
     tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-    tx.onabort = () => { db.close(); reject(tx.error || new Error('Folder save transaction was aborted.')); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => {
+      db.close();
+      reject(validationError || tx.error || new Error('Folder creation was aborted.'));
+    };
+  });
+}
+async function renameLocalFolder(folder: ProjectFolder) {
+  const db = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(FOLDER_STORE, 'readwrite');
+    const store = tx.objectStore(FOLDER_STORE);
+    let validationError: Error | null = null;
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const folders = request.result as ProjectFolder[];
+      if (!folders.some((item) => item.id === folder.id)) {
+        validationError = new Error('This folder no longer exists.');
+        tx.abort();
+        return;
+      }
+      const nameError = getProjectFolderNameError(folder.name, folders, folder.id);
+      if (nameError) {
+        validationError = new Error(nameError);
+        tx.abort();
+        return;
+      }
+      store.put(folder);
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => {
+      db.close();
+      reject(validationError || tx.error || new Error('Folder rename was aborted.'));
+    };
   });
 }
 async function deleteLocalFolderAndUnassignProjects(folderId: string) {
@@ -233,34 +424,71 @@ async function deleteLocalFolderAndUnassignProjects(folderId: string) {
 async function readLocalMedia(projectId: string): Promise<Asset[]> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const req = db.transaction(MEDIA_STORE, 'readonly').objectStore(MEDIA_STORE).index('projectId').getAll(projectId);
+    const tx = db.transaction([MEDIA_STORE, MEDIA_BLOB_STORE], 'readonly');
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    const req = tx.objectStore(MEDIA_STORE).index('projectId').getAll(projectId);
+    let records: StoredMediaRecord[] = [];
+    const loadedBlobs = new Map<string, Blob>();
     req.onsuccess = () => {
-      db.close();
-      resolve((req.result as Array<{ asset: Asset }>).map((record) => record.asset));
+      records = req.result as StoredMediaRecord[];
+      for (const record of records) {
+        if (!record.blobId) continue;
+        const blobRequest = blobs.get(record.blobId);
+        blobRequest.onsuccess = () => {
+          const stored = blobRequest.result as StoredMediaBlob | undefined;
+          if (stored?.blob) loadedBlobs.set(record.key, stored.blob);
+        };
+      }
     };
-    req.onerror = () => { db.close(); reject(req.error); };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(records.flatMap((record) => {
+        const blob = loadedBlobs.get(record.key);
+        return blob ? [{ ...record.asset, blob }] : [];
+      }));
+    };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media read transaction was aborted.')); };
   });
 }
 async function deleteLocalMedia(projectId: string, assetId: string) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(MEDIA_STORE, 'readwrite');
-    tx.objectStore(MEDIA_STORE).delete(`${projectId}:${assetId}`);
+    const tx = db.transaction([MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
+    const media = tx.objectStore(MEDIA_STORE);
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    const key = `${projectId}:${assetId}`;
+    const request = media.get(key);
+    request.onsuccess = () => {
+      const record = request.result as StoredMediaRecord | undefined;
+      media.delete(key);
+      if (record?.blobId) {
+        const remaining = media.index('blobId').count(record.blobId);
+        remaining.onsuccess = () => { if (remaining.result === 0) blobs.delete(record.blobId); };
+      }
+    };
     tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onerror = () => { /* onabort reports the transaction error once */ };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Media removal transaction was aborted.')); };
   });
 }
 async function deleteLocalProject(projectId: string) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([PROJECT_STORE, MEDIA_STORE], 'readwrite');
+    const tx = db.transaction([PROJECT_STORE, MEDIA_STORE, MEDIA_BLOB_STORE], 'readwrite');
     tx.objectStore(PROJECT_STORE).delete(projectId);
     const media = tx.objectStore(MEDIA_STORE);
-    const cursorRequest = media.index('projectId').openKeyCursor(IDBKeyRange.only(projectId));
+    const blobs = tx.objectStore(MEDIA_BLOB_STORE);
+    const cursorRequest = media.index('projectId').openCursor(IDBKeyRange.only(projectId));
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result;
       if (!cursor) return;
+      const record = cursor.value as StoredMediaRecord;
       media.delete(cursor.primaryKey);
+      if (record.blobId) {
+        const remaining = media.index('blobId').count(record.blobId);
+        remaining.onsuccess = () => { if (remaining.result === 0) blobs.delete(record.blobId); };
+      }
       cursor.continue();
     };
     tx.oncomplete = () => { db.close(); resolve(); };
@@ -484,6 +712,7 @@ function Home() {
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportElapsed, setExportElapsed] = useState(0);
+  const [exportDirectory, setExportDirectory] = useState<WritableDirectoryHandle | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [mediaImporting, setMediaImporting] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('saving');
@@ -510,6 +739,8 @@ function Home() {
   const [, setHistoryRevision] = useState(0);
   const [mediaRevision, setMediaRevision] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  const relinkFileInput = useRef<HTMLInputElement>(null);
+  const relinkAssetId = useRef<string | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -1171,6 +1402,52 @@ function Home() {
     }
     return importComplete;
   }, [notify]);
+  const relinkMissingAsset = async (metadata: AssetMetadata, file: File): Promise<boolean> => {
+    if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
+      /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|ogg|m4a|aac|flac|jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name))) {
+      notify(`${file.name} is not a supported media file.`, true);
+      return false;
+    }
+    if (mediaImporting) {
+      notify('Wait for the current media operation to finish before relinking.', true);
+      return false;
+    }
+    const targetProjectId = projectRef.current.id;
+    setMediaImporting(true);
+    setSaveState('saving');
+    try {
+      const replacement: Asset = {
+        ...metadata,
+        mimeType: file.type || metadata.mimeType,
+        byteSize: file.size,
+        blob: file,
+      };
+      try {
+        await inspectImportedAsset(replacement);
+      } catch {
+        notify(`The selected file could not be fully analyzed. Cutline will still try to use it as “${metadata.name}”.`, true);
+      }
+      if (projectRef.current.id !== targetProjectId) {
+        notify('The active project changed during relinking. Select the intended project and try again.', true);
+        return false;
+      }
+      await replaceLocalMedia(targetProjectId, replacement);
+      const nextAssets = [...assetsRef.current.filter((asset) => asset.id !== metadata.id), replacement];
+      assetsRef.current = nextAssets;
+      setAssets(nextAssets);
+      setMediaRevision((revision) => revision + 1);
+      await persistProjectSnapshot(projectRef.current, nextAssets);
+      setSavedProjects(await readLocalProjects());
+      notify(`Relinked “${metadata.name}”. Its existing timeline clips were preserved.`);
+      return true;
+    } catch {
+      setSaveState('error');
+      notify(`Could not relink “${metadata.name}”. Check browser storage space and try again.`, true);
+      return false;
+    } finally {
+      setMediaImporting(false);
+    }
+  };
   const addAssetToTimeline = useCallback((asset: Asset, trackId?: string, at = playhead, asAudio = false) => {
     const requestedTrack = trackId ? projectRef.current.tracks.find((track) => track.id === trackId) : undefined;
     const audioOnlySource = isVideo(asset) && (asAudio || requestedTrack?.kind === 'audio');
@@ -1614,54 +1891,58 @@ function Home() {
     catch { notify('Could not read projects from local browser storage.', true); }
   };
   const createProjectFolder = async () => {
+    const requestedName = window.prompt('Name this internal project folder');
+    if (requestedName === null) return null;
+    const name = requestedName.trim();
+    const nameError = getProjectFolderNameError(name, projectFolders);
+    if (nameError) {
+      notify(nameError, true);
+      return null;
+    }
+    const now = Date.now();
+    const folder: ProjectFolder = { id: uid(), name, createdAt: now, updatedAt: now };
     try {
-      const folders = await readLocalFolders();
-      if (folders.length >= MAX_PROJECT_FOLDERS) {
-        notify('Folder limit reached. Rename or delete a folder before creating another.', true);
-        return null;
-      }
-      const requestedName = window.prompt('Name this internal project folder');
-      if (requestedName === null) return null;
-      const name = requestedName.trim();
-      if (!name || name.length > 48) {
-        notify('Folder names must be between 1 and 48 characters.', true);
-        return null;
-      }
-      if (folders.some((folder) => folder.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
-        notify('A folder with that name already exists.', true);
-        return null;
-      }
-      const now = Date.now();
-      const folder: ProjectFolder = { id: uid(), name, createdAt: now, updatedAt: now };
-      await saveLocalFolder(folder);
+      await createLocalFolder(folder);
       const updated = await readLocalFolders();
       setProjectFolders(updated);
       notify(`Created internal folder “${name}”.`);
       return folder;
-    } catch {
-      notify('Could not save this folder in local browser storage.', true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save this folder in local browser storage.';
+      if (message.includes('Folder limit reached')) {
+        setProjectFolders(await readLocalFolders().catch(() => projectFolders));
+      }
+      notify(message, true);
       return null;
+    }
+  };
+  const chooseExportDirectory = async () => {
+    const picker = (window as FileAccessWindow).showDirectoryPicker;
+    if (!picker) {
+      notify('This browser cannot write directly to a chosen folder. Use the browser’s save dialog or download option.', true);
+      return;
+    }
+    try {
+      const directory = await picker.call(window, { mode: 'readwrite' });
+      setExportDirectory(directory);
+      notify(`Exports can now be written directly to “${directory.name}”.`);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      notify(`Could not access that computer folder: ${error instanceof Error ? error.message : 'permission was denied'}`, true);
     }
   };
   const renameProjectFolder = async (folder: ProjectFolder) => {
     const requestedName = window.prompt('Rename internal project folder', folder.name);
     if (requestedName === null) return;
     const name = requestedName.trim();
-    if (!name || name.length > 48) {
-      notify('Folder names must be between 1 and 48 characters.', true);
-      return;
-    }
+    const nameError = getProjectFolderNameError(name, projectFolders, folder.id);
+    if (nameError) { notify(nameError, true); return; }
     try {
-      const folders = await readLocalFolders();
-      if (folders.some((item) => item.id !== folder.id && item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
-        notify('A folder with that name already exists.', true);
-        return;
-      }
-      await saveLocalFolder({ ...folder, name, updatedAt: Date.now() });
+      await renameLocalFolder({ ...folder, name, updatedAt: Date.now() });
       setProjectFolders(await readLocalFolders());
       notify('Folder renamed.');
-    } catch {
-      notify('Could not rename this folder.', true);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not rename this folder.', true);
     }
   };
   const deleteProjectFolder = async (folder: ProjectFolder) => {
@@ -1778,10 +2059,8 @@ function Home() {
   };
   const createProjectFromForm = async () => {
     const name = draftProjectName.trim();
-    if (!name || name.length > 100) {
-      notify('Project names must be between 1 and 100 characters.', true);
-      return;
-    }
+    const nameError = getProjectNameError(name);
+    if (nameError) { notify(nameError, true); return; }
     const folderId = draftProjectFolderId === 'unorganized' ? null : draftProjectFolderId;
     const created = await newProject(name, folderId);
     setCreatingProject(false);
@@ -1811,6 +2090,8 @@ function Home() {
     const requestedName = window.prompt('Save a separate copy as', suggestedName);
     const name = requestedName?.trim();
     if (!name) return;
+    const nameError = getProjectNameError(name);
+    if (nameError) { notify(nameError, true); return; }
     const duplicate: Project = {
       ...source,
       id: uid(),
@@ -1834,7 +2115,7 @@ function Home() {
     }
     setSaveState('saving');
     try {
-      await saveLocalMedia(duplicate.id, sourceAssets);
+      await copyLocalMedia(source.id, duplicate.id);
       await persistProjectSnapshot(duplicate, sourceAssets);
       const records = await readLocalProjects();
       history.current = []; future.current = [];
@@ -1890,7 +2171,7 @@ function Home() {
     const duplicate: Asset = { ...asset, id: uid(), name: `Copy of ${asset.name}` };
     const nextAssets = [...assets, duplicate];
     try {
-      await saveLocalMedia(projectRef.current.id, [duplicate]);
+      await copyLocalMediaAsset(projectRef.current.id, asset.id, projectRef.current.id, duplicate);
       setAssets(nextAssets);
       await persistProjectSnapshot(projectRef.current, nextAssets);
       setSavedProjects(await readLocalProjects());
@@ -1936,8 +2217,11 @@ function Home() {
   };
   const renameSavedProject = async (record: SavedProject) => {
     const name = window.prompt('Rename project', record.project.name);
-    if (!name?.trim() || name.trim() === record.project.name) return;
-    const updatedProject = { ...record.project, name: name.trim() };
+    if (name === null || !name.trim() || name.trim() === record.project.name) return;
+    const cleanedName = name.trim();
+    const nameError = getProjectNameError(cleanedName);
+    if (nameError) { notify(nameError, true); return; }
+    const updatedProject = { ...record.project, name: cleanedName };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
       await persistProjectSnapshot(updatedProject, projectAssets);
@@ -1952,7 +2236,7 @@ function Home() {
     const duplicateProject: Project = { ...record.project, id: uid(), name: `${record.project.name} copy`, exports: [] };
     try {
       const projectAssets = await readLocalMedia(record.project.id);
-      await saveLocalMedia(duplicateProject.id, projectAssets);
+      await copyLocalMedia(record.project.id, duplicateProject.id);
       await persistProjectSnapshot(duplicateProject, projectAssets);
       setSavedProjects(await readLocalProjects());
       notify(`Created “${duplicateProject.name}” as a separate project.`);
@@ -1964,6 +2248,7 @@ function Home() {
   const showProjectDetails = async (record: SavedProject) => {
     let mediaCount = record.assets.length;
     try { mediaCount = (await readLocalMedia(record.project.id)).length; } catch { /* display saved metadata count */ }
+    const latestExport = (record.project.exports || []).slice(-1)[0];
     setDetailsDialog({
       title: 'Project details',
       rows: [
@@ -1975,7 +2260,17 @@ function Home() {
         ['Tracks', String(record.project.tracks.length)],
         ['Canvas', `${record.project.width} × ${record.project.height} at ${record.project.frameRate} fps`],
         ['Recorded exports', String(record.project.exports?.length || 0)],
-        ...((record.project.exports || []).slice(-1).map((item) => ['Latest export', `${item.filename} · ${new Date(item.exportedAt).toLocaleString()}`] as [string, string])),
+        ...(latestExport ? [
+          ['Latest export', `${latestExport.filename} · ${new Date(latestExport.exportedAt).toLocaleString()}`] as [string, string],
+          ['Export destination', latestExport.computerFolderName
+            ? `Computer folder “${latestExport.computerFolderName}”`
+            : latestExport.saveMethod === 'browser-download'
+              ? 'Browser download'
+              : latestExport.saveMethod === 'save-picker'
+                ? 'Location selected in browser'
+                : 'Not recorded'] as [string, string],
+          ['Recorded in Cutline folder', projectFolders.find((folder) => folder.id === latestExport.folderId)?.name || 'Unorganized Projects'] as [string, string],
+        ] : []),
         ['Project ID', record.project.id],
       ],
     });
@@ -2308,37 +2603,46 @@ function Home() {
     );
     const exportBitrate = getExportVideoBitrate(project.width, project.height, project.frameRate);
     const extension = format;
-    const requestedBaseName = exportName.trim().replace(/\.(mp4|webm)$/i, '') || 'cutline-export';
-    const usedExportNames = new Set((project.exports || []).map((item) => item.filename.toLocaleLowerCase()));
-    let baseName = requestedBaseName;
-    let suffix = 2;
-    while (usedExportNames.has(`${baseName}.${extension}`.toLocaleLowerCase())) {
-      baseName = `${requestedBaseName}-${suffix}`;
-      suffix += 1;
-    }
-    if (baseName !== requestedBaseName) {
-      setExportName(baseName);
-      notify(`That filename is already in this project’s export history. Using “${baseName}.${extension}”.`);
-    }
-    type FileWriteCommand = { type: 'write'; position: number; data: Uint8Array };
-    type WritableFile = { write: (chunk: FileWriteCommand) => Promise<void>; close: () => Promise<void>; abort: (reason?: unknown) => Promise<void> };
-    type SavePicker = Window & {
-      showSaveFilePicker?: (options: {
-        suggestedName: string;
-        types: Array<{ description: string; accept: Record<string, string[]> }>;
-      }) => Promise<{ createWritable: () => Promise<unknown>; name?: string }>;
-    };
-    const pickerWindow = window as SavePicker;
-    let fileHandle: { createWritable: () => Promise<unknown>; name?: string } | null = null;
+    const requestedBaseName = sanitizeExportBaseName(exportName);
+    let baseName = getUniqueExportBaseName(
+      requestedBaseName,
+      extension,
+      (project.exports || []).map((item) => item.filename),
+    );
+    const outputDirectory = exportDirectory;
+    const pickerWindow = window as FileAccessWindow;
+    let fileHandle: WritableFileHandle | null = null;
+    let outputFileName = `${baseName}.${extension}`;
     let renderedByteSize: number | undefined;
     let outputMessage = '';
     try {
-      // Call the picker before awaiting codec detection so the browser still considers it user initiated.
-      if (pickerWindow.showSaveFilePicker) {
+      if (outputDirectory) {
+        const permission = await outputDirectory.queryPermission?.({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          const requested = await outputDirectory.requestPermission?.({ mode: 'readwrite' });
+          if (requested !== 'granted') {
+            throw new Error('Write permission for the selected computer folder was not granted.');
+          }
+        }
+        const occupiedNames = (project.exports || []).map((item) => item.filename);
+        while (true) {
+          baseName = getUniqueExportBaseName(requestedBaseName, extension, occupiedNames);
+          outputFileName = `${baseName}.${extension}`;
+          try {
+            await outputDirectory.getFileHandle(outputFileName);
+            occupiedNames.push(outputFileName);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'NotFoundError') break;
+            throw error;
+          }
+        }
+      } else if (pickerWindow.showSaveFilePicker) {
+        // Open a file picker before codec detection while the click is still user initiated.
         fileHandle = await pickerWindow.showSaveFilePicker({
           suggestedName: `${baseName}.${extension}`,
           types: [{ description: `${extension.toUpperCase()} video`, accept: { [format === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${extension}`] } }],
         });
+        outputFileName = fileHandle.name || `${baseName}.${extension}`;
       } else {
         const estimatedBytes = end * (exportBitrate + 128_000) / 8;
         if (end > 30 || estimatedBytes > 64 * 1024 * 1024) {
@@ -2350,6 +2654,12 @@ function Home() {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       notify(`Could not open an export file: ${error instanceof Error ? error.message : 'browser file access was denied'}`, true);
       return;
+    }
+    if (baseName !== sanitizeExportBaseName(exportName)) {
+      setExportName(baseName);
+      notify(`That filename already exists. Using “${baseName}.${extension}” instead.`);
+    } else if (exportName !== baseName) {
+      setExportName(baseName);
     }
 
     setExportElapsed(0);
@@ -2385,7 +2695,16 @@ function Home() {
       }
 
       let target: BufferTarget | StreamTarget;
-      if (fileHandle) {
+      if (outputDirectory) {
+        const outputHandle = await outputDirectory.getFileHandle(outputFileName, { create: true });
+        diskWriter = await (outputHandle.createWritable() as Promise<WritableFile>);
+        const writable = new WritableStream<StreamTargetChunk>({
+          write: (chunk) => diskWriter!.write({ type: 'write', position: chunk.position, data: chunk.data }),
+          close: () => diskWriter!.close(),
+          abort: (reason) => diskWriter!.abort(reason),
+        });
+        target = new StreamTarget(writable);
+      } else if (fileHandle) {
         diskWriter = await (fileHandle.createWritable() as Promise<WritableFile>);
         const writable = new WritableStream<StreamTargetChunk>({
           write: (chunk) => diskWriter!.write({ type: 'write', position: chunk.position, data: chunk.data }),
@@ -2558,17 +2877,19 @@ function Home() {
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `${baseName}.${extension}`;
+        anchor.download = outputFileName;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 30000);
         outputMessage = `Rendered ${formatBytes(blob.size)} ${extension.toUpperCase()} locally`;
       } else {
-        outputMessage = `Rendered ${fileHandle?.name || `${baseName}.${extension}`} to the location selected in the browser`;
+        outputMessage = outputDirectory
+          ? `Rendered ${outputFileName} in computer folder “${outputDirectory.name}”`
+          : `Rendered ${fileHandle?.name || outputFileName} to the location selected in the browser`;
       }
       const currentProject = projectRef.current;
-      const filename = fileHandle?.name || `${baseName}.${extension}`;
+      const filename = fileHandle?.name || outputFileName;
       const exportRecord = {
         id: uid(),
         filename,
@@ -2576,6 +2897,8 @@ function Home() {
         folderId: exportFolderId === 'unorganized' ? null : exportFolderId,
         exportedAt: Date.now(),
         ...(renderedByteSize === undefined ? {} : { byteSize: renderedByteSize }),
+        saveMethod: outputDirectory ? 'computer-folder' as const : fileHandle ? 'save-picker' as const : 'browser-download' as const,
+        ...(outputDirectory ? { computerFolderName: outputDirectory.name } : {}),
       };
       const updatedProject: Project = { ...currentProject, exports: [...(currentProject.exports || []), exportRecord] };
       setProject(updatedProject);
@@ -2588,7 +2911,7 @@ function Home() {
       const destination = exportFolderId === 'unorganized'
         ? 'Unorganized Projects'
         : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'the selected internal folder';
-      notify(`${outputMessage}. Recorded under “${destination}” in Cutline. Internal folders organize projects only; the browser chooses the actual save location.`);
+      notify(`${outputMessage}. Recorded under “${destination}” in Cutline. The Cutline folder organizes project history and does not move the project.`);
       setDialog(null);
     } catch (error) {
       if (exportCancelRequested.current && error instanceof DOMException && error.name === 'AbortError') {
@@ -2636,6 +2959,23 @@ function Home() {
         ? a.project.name.localeCompare(b.project.name)
         : b.savedAt - a.savedAt);
   }, [savedProjects, projectSearch, projectSort, selectedProjectFolder]);
+  const missingProjectAssets = useMemo(() => {
+    const currentRecord = savedProjects.find((record) => record.project.id === project.id);
+    const metadataById = new Map((currentRecord?.assets || []).map((asset) => [asset.id, asset]));
+    const missingIds = new Set<string>();
+    for (const asset of currentRecord?.assets || []) {
+      if (!assets.some((loaded) => loaded.id === asset.id)) missingIds.add(asset.id);
+    }
+    for (const clip of project.clips) {
+      if (clip.assetId && !assets.some((loaded) => loaded.id === clip.assetId)) missingIds.add(clip.assetId);
+    }
+    return Array.from(missingIds, (id): AssetMetadata => metadataById.get(id) || {
+      id,
+      name: 'Missing media file',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+    });
+  }, [assets, project, savedProjects]);
   const projectFolderOptions = [
     { value: 'unorganized', label: 'Unorganized projects' },
     ...projectFolders.map((folder) => ({ value: folder.id, label: folder.name })),
@@ -2733,7 +3073,13 @@ function Home() {
         event.preventDefault(); setDropActive(false);
         const internal = event.dataTransfer.getData('application/x-cutline-asset');
         if (internal) { const asset = assets.find((item) => item.id === internal); if (asset) addAssetToTimeline(asset); }
-        else if (event.dataTransfer.files.length) void importFiles(event.dataTransfer.files);
+         else if (event.dataTransfer.files.length) {
+           if (project.clips.length === 0 && assets.length === 0) {
+             setPendingDroppedFiles(Array.from(event.dataTransfer.files));
+             setDropProjectId(projectRef.current.id);
+             void openProjects();
+           } else void importFiles(event.dataTransfer.files);
+         }
       }}>
       <header className="topbar">
           <div className="brand" aria-label="Cutline">
@@ -2766,7 +3112,7 @@ function Home() {
         <button className="icon-btn" onClick={redo} disabled={!future.current.length} title="Redo (Ctrl+Shift+Z)" data-testid="button-redo"><Redo2 size={16} /></button>
         <button className="btn" onClick={openProjects} disabled={mediaImporting} title={mediaImporting ? 'Wait for media import to finish' : 'Manage projects'} aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
-        <button className="btn primary" onClick={() => { setExportFolderId(project.folderId || 'unorganized'); setDialog('export'); }} data-testid="button-export"><Download size={14} /><span>Export</span></button>
+         <button className="btn primary" onClick={() => { setExportFolderId(project.folderId || 'unorganized'); setExportName(sanitizeExportBaseName(`${project.name}-export`)); setDialog('export'); }} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
       <section className="editor-body">
         <nav className="workspace-rail" aria-label="Editing workspaces">
@@ -2796,10 +3142,45 @@ function Home() {
               <label className="search-box"><Search size={13} /><input aria-label={`Search ${libraryWorkspace}`} data-testid="input-search-media" placeholder="Find media…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
               <button className="icon-btn active" title="Import local media" onClick={() => fileInput.current?.click()} data-testid="button-import"><Plus size={17} /></button>
               <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => { if (event.target.files) void importFiles(event.target.files); event.target.value = ''; }} data-testid="input-media-files" />
+              <input
+                ref={relinkFileInput}
+                hidden
+                type="file"
+                accept="video/*,audio/*,image/*,.mkv,.avi,.flac"
+                aria-label="Choose replacement media file"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  const assetId = relinkAssetId.current;
+                  const metadata = missingProjectAssets.find((asset) => asset.id === assetId);
+                  relinkAssetId.current = null;
+                  event.currentTarget.value = '';
+                  if (file && metadata) void relinkMissingAsset(metadata, file);
+                }}
+                data-testid="input-relink-media"
+              />
             </div>
             <div className="asset-list" onContextMenu={(event) => {
               if (!(event.target instanceof Element) || !event.target.closest('[data-testid^="row-media-"]')) openContextMenu(event, 'empty');
             }}>
+              {missingProjectAssets.map((missing) => (
+                <div className="missing-media-row" key={missing.id} role="alert">
+                  <span className="asset-thumb"><CircleAlert size={15} /></span>
+                  <span className="asset-details">
+                    <span className="asset-name">{missing.name}</span>
+                    <span className="asset-meta">Media is unavailable in this browser. Relink the source file to restore its timeline clips.</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={mediaImporting}
+                    onClick={() => {
+                      relinkAssetId.current = missing.id;
+                      relinkFileInput.current?.click();
+                    }}
+                    data-testid={`button-relink-media-${missing.id}`}
+                  >Relink</button>
+                </div>
+              ))}
               {filteredAssets.length === 0 ? (
                 <button className="asset-row" style={{ minHeight: 72, cursor: 'pointer' }} onClick={() => fileInput.current?.click()} data-testid="button-empty-import">
                   <span className="asset-thumb"><Upload size={16} /></span><span className="asset-details"><span className="asset-name">{projectMediaAssets.length ? 'No matching media' : 'Bring in your first clip'}</span><span className="asset-meta">{projectMediaAssets.length ? 'Try another search or workspace' : 'Import files from this PC'}</span></span>
@@ -2972,7 +3353,7 @@ function Home() {
               >
                 <span className="project-welcome__icon"><Clapperboard size={24} /></span>
                 <h3>Drop your first clip here</h3>
-                <p>Media you drop is added to “{project.name}”. Open a saved project to keep editing its existing timeline.</p>
+                <p>Drop media here to choose a project destination. Open a saved project to continue its timeline, or create a new one.</p>
                 <div>
                   <button type="button" className="btn primary" onClick={beginNewProject}><FilePlus2 size={14} />New project</button>
                   <button type="button" className="btn" onClick={() => void openProjects()}><FolderOpen size={14} />Browse projects</button>
@@ -3328,9 +3709,30 @@ function Home() {
             </button>
           </div>
           <p className="export-location-note">
-            {exportFolderId === 'unorganized' ? 'Unorganized Projects' : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'Selected internal folder'} is a Cutline library label, not a Windows folder. The browser download uses Downloads unless you choose a location in its save picker.
+            The Cutline destination “{exportFolderId === 'unorganized' ? 'Unorganized Projects' : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'Selected internal folder'}” organizes export history only; it does not move this project or select a computer directory.
             {projectFolders.length >= MAX_PROJECT_FOLDERS ? ' Folder creation is unavailable because the 10-folder limit is reached.' : ''}
           </p>
+          <label>Save directly to a computer folder (optional)</label>
+          <div className="export-computer-folder">
+            <div>
+              <strong>{exportDirectory ? exportDirectory.name : 'No computer folder selected'}</strong>
+              <small>{exportDirectory
+                ? 'The video will be written here after browser permission is granted.'
+                : 'Otherwise, choose a location in the browser save dialog or use its Downloads fallback.'}</small>
+            </div>
+            <button
+              className="btn"
+              type="button"
+              disabled={exporting || !(window as FileAccessWindow).showDirectoryPicker}
+              onClick={() => void chooseExportDirectory()}
+              title={(window as FileAccessWindow).showDirectoryPicker
+                ? 'Choose a real computer folder for the rendered video'
+                : 'This browser does not support direct folder access'}
+              data-testid="button-choose-export-directory"
+            ><FolderOpen size={13} />Choose folder</button>
+            {exportDirectory && <button type="button" className="btn" disabled={exporting} onClick={() => setExportDirectory(null)}>Clear</button>}
+          </div>
+          {!(window as FileAccessWindow).showDirectoryPicker && <p className="export-location-note">This browser cannot grant direct folder access. Use the browser save dialog when available; otherwise the video downloads to its normal download location.</p>}
           <label htmlFor="export-format">Format</label>
           <CutlineSelect
             id="export-format"
@@ -3343,7 +3745,7 @@ function Home() {
             disabled={exporting}
             data-testid="select-export-format"
           />
-          <p style={{ marginBottom: 0 }}>Output: {project.width} × {project.height} at {project.frameRate} fps. Large renders stream to the browser-selected file when File System Access is available. Without it, the download fallback is limited to 30 seconds and an estimated 64 MB. The internal destination will not move this project.</p>
+          <p style={{ marginBottom: 0 }}>Output: {project.width} × {project.height} at {project.frameRate} fps. Large renders stream directly to a selected computer folder or save-file location when supported. Browser-download fallback is limited to 30 seconds and an estimated 64 MB. The export destination never moves the project.</p>
           {exporting && <>
             <div className="export-progress-meta"><span>Elapsed {formatElapsedTime(exportElapsed)}</span><span>{exportProgress}%</span></div>
             <div className="progress-track" role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={exportProgress}><span style={{ width: `${exportProgress}%` }} /></div>

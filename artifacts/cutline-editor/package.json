@@ -8,7 +8,7 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:timeline": "node --experimental-strip-types --test src/lib/timeline-geometry.test.ts src/lib/export-utils.test.ts",
+    "test:timeline": "node --experimental-strip-types --test src/lib/timeline-geometry.test.ts src/lib/export-utils.test.ts src/lib/project-library-utils.test.ts",
     "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts",
     "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts"
   },

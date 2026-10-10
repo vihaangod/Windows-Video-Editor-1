@@ -192,6 +192,8 @@ export type ProjectExport = {
   folderId: string | null;
   exportedAt: number;
   byteSize?: number;
+  saveMethod?: 'computer-folder' | 'save-picker' | 'browser-download';
+  computerFolderName?: string;
 };
 export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
 

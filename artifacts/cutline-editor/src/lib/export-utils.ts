@@ -13,3 +13,32 @@ export function getExportProgress(completedFrames: number, totalFrames: number) 
   const completed = Number.isFinite(completedFrames) ? Math.max(0, completedFrames) : 0;
   return Math.max(0, Math.min(99, Math.floor((completed / totalFrames) * 100)));
 }
+
+export function sanitizeExportBaseName(value: string) {
+  const withoutExtension = value.trim().replace(/\.(mp4|webm)$/i, '');
+  const safe = withoutExtension
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 120)
+    .replace(/[. ]+$/g, '')
+    .trim();
+  if (!safe) return 'cutline-export';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(safe)) return `_${safe}`;
+  return safe;
+}
+
+export function getUniqueExportBaseName(
+  requestedBaseName: string,
+  extension: 'mp4' | 'webm',
+  usedFilenames: Iterable<string>,
+) {
+  const used = new Set(Array.from(usedFilenames, (filename) => filename.toLowerCase()));
+  const baseName = sanitizeExportBaseName(requestedBaseName);
+  let candidate = baseName;
+  let suffix = 2;
+  while (used.has(`${candidate}.${extension}`.toLowerCase())) {
+    candidate = `${baseName}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}

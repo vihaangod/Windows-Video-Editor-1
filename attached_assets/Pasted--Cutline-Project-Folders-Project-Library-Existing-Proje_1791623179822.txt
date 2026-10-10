@@ -1,0 +1,205 @@
+# Cutline — Project Folders, Project Library, Existing Project Editing, and Export Management
+
+Inspect the existing Cutline codebase and implement a complete project and folder management system. Fix the existing “Projects on This Device” popup and integrate the workflow below into the current interface.
+
+Preserve the existing dark-and-gold theme, timeline, editor, preview, and export functionality. Reuse existing components where possible and do not rebuild the application from scratch.
+
+## 1. Project Folders — Maximum 10 Folders
+
+Allow users to create and manage up to **10 project folders** in Cutline.
+
+Requirements:
+
+* Add a clear Create Folder button.
+* Let users enter a custom folder name.
+* Prevent creating more than 10 folders.
+* Show a clear message when the 10-folder limit is reached.
+* Allow folders to be renamed and deleted, with confirmation before deletion.
+* Deleting a folder must not silently delete its projects. Explain the consequences and offer a safe way to move or preserve projects before deletion.
+* Each folder can contain any reasonable number of projects, subject to available storage.
+* Display each folder with its name, project count, and a suitable folder icon.
+* Keep folder contents organized and separate from other folders.
+* Prevent duplicate or invalid folder names where necessary.
+* Save folder information persistently so it remains available after restarting Cutline.
+
+The 10-folder limit applies to user-created project folders, not the number of projects or imported clips.
+
+## 2. Projects Inside Folders
+
+Each project must belong to a folder, except when the user intentionally chooses an available general or unorganized projects area.
+
+For example:
+
+Cutline Projects
+
+* Gaming Edits
+
+  * Bedwars Montage
+  * Hypixel Highlights
+  * Final Gaming Video
+* YouTube Videos
+
+  * My First Edit
+  * Tutorial Video
+* Shorts
+
+  * First Short
+  * Gaming Short
+
+This is an example of the organization; do not hardcode these names.
+
+Requirements:
+
+* Allow users to create multiple projects inside the same folder.
+* Show project cards with the project name, thumbnail where available, last modified date, and other useful metadata.
+* Provide Open, Rename, Move, Duplicate, and Delete actions where appropriate.
+* Moving a project between folders must preserve its timeline, media references, text, effects, and project settings.
+* Duplicate must create an independent project identity without overwriting the original.
+* Store a project ID separately from its editable display name.
+* Do not create duplicate projects every time autosave runs.
+
+## 3. “Drop Your First Clip Here” — Project Selection
+
+Improve the editor's empty state and media import workflow.
+
+When the user opens Cutline, the starting screen should provide:
+
+* A prominent “New Project” option.
+* A “Drop Your First Clip Here” drag-and-drop area.
+* A way to browse existing project folders and projects.
+* A clear way to open and continue editing an existing project.
+
+The user must be able to choose either workflow:
+
+**New project workflow**
+
+1. Create a project.
+2. Enter a project name.
+3. Select an existing folder or create a new folder if fewer than 10 folders exist.
+4. Import or drop the first clip.
+5. Start editing.
+
+**Existing project workflow**
+
+1. Browse project folders from the starting screen.
+2. Select an existing project.
+3. Open it in the editor.
+4. Continue editing the existing timeline.
+5. Add more clips without creating an unnecessary new project.
+
+If the user drops a clip before creating or selecting a project, preserve the clip and prompt the user to choose a project destination. Never silently discard the imported clip.
+
+## 4. Importing New Clips Into Existing Projects
+
+When a user opens an existing project and imports new video, audio, or image clips:
+
+* Add the new media to the currently active project.
+* Allow the user to add it to the media library or place it on the timeline, according to the existing editor workflow.
+* Do not automatically create a new project for every imported clip.
+* Do not replace or delete existing clips unless the user explicitly chooses to do so.
+* Preserve the existing timeline arrangement and editing decisions.
+* Support importing multiple clips where the existing architecture allows it.
+* Save the updated project through the existing autosave mechanism.
+
+## 5. Exporting Into Existing or New Project Folders
+
+The export workflow must let the user select where the final video should be saved.
+
+When exporting, provide:
+
+* Current project name.
+* Output filename.
+* A folder selector listing the user's existing project folders.
+* The current project's folder selected by default.
+* An option to create a new folder during export, if fewer than 10 folders exist.
+* An option to select another existing folder.
+* A clear export location summary before starting.
+* Existing resolution, FPS, and format controls.
+
+Expected behavior:
+
+* If the user chooses an existing folder, save or download the export to that folder when supported by the platform.
+* If the user creates a new folder during export, add it to the project library and save the export there when supported.
+* If the current project is in “Gaming Edits” but the user chooses “YouTube Videos”, the export must go to the selected destination rather than silently using the current folder.
+* The export destination must not automatically move the project itself.
+* Let users export multiple versions without overwriting previous exports silently.
+* Use a unique filename or ask for confirmation when a filename already exists.
+* After a successful export, associate the exported video with the source project and record its destination and filename where possible.
+* Provide an appropriate download or open-location action supported by the current platform.
+
+If the user has already created 10 folders, disable the Create Folder option and explain that they must rename or remove an existing folder before creating another.
+
+## 6. Fix “Projects on This Device”
+
+Audit and fix the existing popup or menu.
+
+* Fix incorrect positioning, clipping, stacking, scrolling, and sizing.
+* Ensure the popup opens and closes reliably.
+* Fix broken event handlers and project selection.
+* Display the folder list and project cards correctly.
+* Allow users to expand folders and view their projects.
+* Ensure selecting a project loads the correct project.
+* Provide proper empty states for folders with no projects.
+* Make the menu responsive to different window sizes.
+* Preserve the existing theme and avoid covering important editor controls unnecessarily.
+
+## 7. Project Saving and Persistence
+
+Every project must preserve:
+
+* Unique project ID and project name.
+* Folder assignment.
+* Timeline clips, positions, durations, and track arrangement.
+* Media references and metadata.
+* Text, titles, animations, effects, and filters.
+* Canvas aspect ratio and output settings.
+* Supported audio settings.
+* Export history and output references where practical.
+* Last modified time and thumbnail metadata where available.
+
+Requirements:
+
+* Use reliable persistent storage for project metadata and editing state.
+* Reuse the existing autosave system where possible.
+* Show accurate Saving, Saved, and Unsaved Changes statuses.
+* Restore folders and projects after a browser refresh or application restart.
+* Opening a project must restore the correct editing state.
+* Handle missing or moved media gracefully and offer relinking where necessary.
+* Protect unsaved work when switching projects.
+* Never clear existing storage or delete existing projects as part of this upgrade.
+* Keep the project data and exported video as separate assets.
+
+## 8. Browser and Filesystem Limitations
+
+Cutline currently runs as a browser application, so distinguish between its internal project library and actual computer folders.
+
+* Use the existing persistent storage system or IndexedDB for project metadata and state where appropriate.
+* Use the File System Access API when supported and after the user grants permission.
+* If actual directory access is unavailable, provide a clear browser-compatible fallback.
+* Do not claim that an export has been saved inside a real folder if the browser only downloaded it to the default Downloads directory.
+* If a folder is created inside Cutline's internal project library, label it clearly as an internal project folder rather than implying it is a Windows filesystem folder.
+* Keep the storage layer modular for future Windows desktop filesystem support.
+* Respect available storage limits, especially when working with large video files.
+* Avoid duplicating large media files unnecessarily.
+
+## 9. Verification
+
+Test the following:
+
+1. Create folders and verify that the 10-folder maximum is enforced.
+2. Create multiple projects inside a folder.
+3. Open an existing project and add new clips.
+4. Save, refresh, reopen, and verify that editing state persists.
+5. Move and rename projects without losing their data.
+6. Export into the current project's folder.
+7. Export into a different existing folder.
+8. Create a folder from the export dialog when the limit permits.
+9. Verify that the folder-creation option is disabled at the limit.
+10. Test filename conflicts and export failures.
+11. Test the “Drop Your First Clip Here” workflow.
+12. Verify that the “Projects on This Device” popup works correctly.
+13. Run type checking, relevant tests, and available build checks.
+
+At the end, report what was implemented, which storage mechanism is used, whether exports are saved to real filesystem folders or downloaded through the browser, and which tests actually passed.
+
+Do not claim success for untested functionality.
