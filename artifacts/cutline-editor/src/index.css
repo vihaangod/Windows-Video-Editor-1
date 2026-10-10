@@ -170,7 +170,7 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .workspace-rail__item.is-active { color:#f2bf57; background:#292b2e; border-color:#494237; box-shadow:inset 2px 0 #edb94e; }
 .workspace-rail__item span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .library { min-height:0; border-right:1px solid #30353e; display:flex; flex-direction:column; background:#1b1f26; }
-.library > .cutline-title-templates,.library > .cutline-effect-workspace { min-height:0; height:auto; flex:1 1 auto; }
+.library > .cutline-effect-workspace { min-height:0; height:auto; flex:1 1 auto; }
 .panel-heading { height:48px; display:flex; align-items:center; padding:0 16px; gap:9px; border-bottom:1px solid #30353e; color:#d8dadd; font-size:11px; text-transform:uppercase; font-weight:800; letter-spacing:.1em; }
 .panel-heading small { color:#7f8791; font:10px var(--app-font-mono); margin-left:auto; letter-spacing:0; }
 .asset-tools { padding:12px; display:flex; gap:7px; }
