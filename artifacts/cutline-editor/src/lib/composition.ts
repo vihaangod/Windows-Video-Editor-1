@@ -32,7 +32,14 @@ export type ClipEffects = {
   vignette: number;
   filterPreset?: string;
   filterIntensity?: number;
+  filterStack?: ClipFilter[];
   enabled?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'blur', boolean>>;
+};
+
+export type ClipFilter = {
+  presetId: string;
+  intensity: number;
+  enabled: boolean;
 };
 
 export type MarkupTool = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'text';
@@ -104,6 +111,7 @@ export type Clip = {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
   opacity?: number;
+  muted?: boolean;
   fadeIn?: number;
   fadeOut?: number;
   text?: TextOverlay;
@@ -216,6 +224,12 @@ export const FILTER_PRESETS = [
   { id: 'sepia-print', name: 'Sepia Print', description: 'Low-color warm brown tones with a subtle printed-film fade.', values: { brightness: 1.03, contrast: .96, saturation: .38, temperature: 38, tint: 9, fade: .13, vignette: .06 } },
   { id: 'neon-night', name: 'Neon Night', description: 'Deep, cool shadows and vivid color for nighttime scenes.', values: { brightness: .88, contrast: 1.3, saturation: 1.34, temperature: -28, tint: 12, fade: 0, vignette: .26 } },
   { id: 'crisp-detail', name: 'Crisp Detail', description: 'Clean, high contrast with natural color and minimal tint.', values: { brightness: 1, contrast: 1.3, saturation: 1.02, temperature: 0, tint: 0, fade: 0, vignette: .04 } },
+  { id: 'teal-amber', name: 'Teal & Amber', description: 'Cool shadows and warm highlights for a balanced cinematic grade.', values: { brightness: 1, contrast: 1.2, saturation: 1.12, temperature: 15, tint: -12, fade: .02, vignette: .1 } },
+  { id: 'high-key-airy', name: 'High Key Airy', description: 'Bright, low-contrast color with a clean, open look.', values: { brightness: 1.2, contrast: .84, saturation: .9, temperature: 5, tint: 1, fade: .12, vignette: 0 } },
+  { id: 'magenta-pop', name: 'Magenta Pop', description: 'A vivid pink-violet cast with rich color and deep edges.', values: { brightness: 1.02, contrast: 1.14, saturation: 1.32, temperature: -8, tint: 34, fade: 0, vignette: .1 } },
+  { id: 'soft-film-print', name: 'Soft Film Print', description: 'Warm, restrained color with lifted blacks and gentle contrast.', values: { brightness: 1.06, contrast: .9, saturation: .76, temperature: 24, tint: 4, fade: .2, vignette: .05 } },
+  { id: 'arctic-silver', name: 'Arctic Silver', description: 'Cool, nearly monochrome tones with clean contrast.', values: { brightness: 1.04, contrast: 1.12, saturation: .18, temperature: -38, tint: -4, fade: .04, vignette: .08 } },
+  { id: 'shadow-crush', name: 'Shadow Crush', description: 'Dark, high-contrast color with pronounced edge falloff.', values: { brightness: .78, contrast: 1.48, saturation: 1.16, temperature: -5, tint: 0, fade: 0, vignette: .34 } },
 ] as const;
 
 function clamp01(value: number) {
@@ -228,20 +242,36 @@ function interpolate(from: number, to: number, amount: number) {
 
 function getRenderedEffects(clip: Clip) {
   const base = { ...DEFAULT_EFFECTS, ...clip.effects };
-  const preset = FILTER_PRESETS.find((item) => item.id === base.filterPreset);
-  const amount = preset ? clamp01((base.filterIntensity ?? 100) / 100) : 0;
-  const values = preset?.values ?? FILTER_PRESETS[0].values;
+  const stack = Array.isArray(clip.effects?.filterStack)
+    ? clip.effects.filterStack.filter((filter) => filter.enabled)
+    : base.filterPreset
+      ? [{ presetId: base.filterPreset, intensity: base.filterIntensity ?? 100, enabled: true }]
+      : [];
+  const filtered = stack.reduce((result, filter) => {
+    const preset = FILTER_PRESETS.find((item) => item.id === filter.presetId);
+    if (!preset || preset.id === 'original') return result;
+    const amount = clamp01(filter.intensity / 100);
+    return {
+      brightness: result.brightness * interpolate(1, preset.values.brightness, amount),
+      contrast: result.contrast * interpolate(1, preset.values.contrast, amount),
+      saturation: result.saturation * interpolate(1, preset.values.saturation, amount),
+      temperature: result.temperature + preset.values.temperature * amount,
+      tint: result.tint + preset.values.tint * amount,
+      fade: 1 - (1 - result.fade) * (1 - preset.values.fade * amount),
+      vignette: 1 - (1 - result.vignette) * (1 - preset.values.vignette * amount),
+    };
+  }, { brightness: 1, contrast: 1, saturation: 1, temperature: 0, tint: 0, fade: 0, vignette: 0 });
   return {
     brightness: (base.enabled?.brightness === false ? 1 : base.brightness) *
-      interpolate(1, values.brightness, amount) * 2 ** Math.max(-4, Math.min(4, base.exposure)),
-    contrast: (base.enabled?.contrast === false ? 1 : base.contrast) * interpolate(1, values.contrast, amount) *
+      filtered.brightness * 2 ** Math.max(-4, Math.min(4, base.exposure)),
+    contrast: (base.enabled?.contrast === false ? 1 : base.contrast) * filtered.contrast *
       Math.max(.05, 1 - Math.max(0, base.fade) * .25),
-    saturation: (base.enabled?.saturation === false ? 1 : base.saturation) * interpolate(1, values.saturation, amount),
+    saturation: (base.enabled?.saturation === false ? 1 : base.saturation) * filtered.saturation,
     blur: base.enabled?.blur === false ? 0 : base.blur,
-    temperature: Math.max(-100, Math.min(100, base.temperature + values.temperature * amount)),
-    tint: Math.max(-100, Math.min(100, base.tint + values.tint * amount)),
-    fade: clamp01(1 - (1 - clamp01(base.fade)) * (1 - values.fade * amount)),
-    vignette: clamp01(1 - (1 - clamp01(base.vignette)) * (1 - values.vignette * amount)),
+    temperature: Math.max(-100, Math.min(100, base.temperature + filtered.temperature)),
+    tint: Math.max(-100, Math.min(100, base.tint + filtered.tint)),
+    fade: clamp01(1 - (1 - clamp01(base.fade)) * (1 - filtered.fade)),
+    vignette: clamp01(1 - (1 - clamp01(base.vignette)) * (1 - filtered.vignette)),
   };
 }
 

@@ -124,10 +124,11 @@
 }
 
 .cutline-title-templates__list {
-  display: flex;
+  display: grid;
   min-height: 0;
   flex: 1 1 auto;
-  flex-direction: column;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   gap: 12px;
   overflow: auto;
   padding: 14px 14px 18px;
@@ -352,11 +353,12 @@
 
 .cutline-template-card__footer {
   display: flex;
-  min-height: 49px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px 8px 11px;
+  min-height: 62px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
 }
 
 .cutline-template-card__copy {
@@ -367,7 +369,7 @@
   overflow: hidden;
   margin: 0 0 4px;
   color: #e3e4e4;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -376,7 +378,7 @@
 .cutline-template-card__copy > span {
   color: #878e98;
   font-family: var(--app-font-mono, Consolas, monospace);
-  font-size: 9px;
+  font-size: 8px;
 }
 
 .cutline-template-card__copy i {
@@ -388,7 +390,7 @@
 .cutline-template-card__add {
   display: inline-flex;
   min-width: 55px;
-  height: 28px;
+  height: 25px;
   align-items: center;
   justify-content: center;
   gap: 4px;
@@ -470,6 +472,97 @@
   line-height: 1.4;
 }
 
+.cutline-template-dialog-backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 7, 10, .78);
+}
+
+.cutline-template-dialog {
+  width: min(600px, 100%);
+  padding: 18px;
+  border: 1px solid rgba(229, 167, 72, .38);
+  border-radius: 9px;
+  color: #e5e7e9;
+  background: #20242b;
+  box-shadow: 0 20px 70px #000b;
+}
+
+.cutline-template-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.cutline-template-dialog > header span {
+  color: #d4a858;
+  font: 9px var(--app-font-mono, Consolas, monospace);
+  text-transform: uppercase;
+  letter-spacing: .11em;
+}
+
+.cutline-template-dialog > header h3 {
+  margin: 4px 0 0;
+  color: #f0eee9;
+  font-size: 15px;
+}
+
+.cutline-template-dialog > header button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--ctp-line);
+  border-radius: 5px;
+  color: #b8bec5;
+  background: #282d35;
+}
+
+.cutline-template-dialog__preview {
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 5px;
+}
+
+.cutline-template-dialog > p {
+  margin: 12px 0 0;
+  color: var(--ctp-muted);
+  font-size: 10px;
+}
+
+.cutline-template-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.cutline-template-dialog__actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--ctp-line);
+  border-radius: 5px;
+  color: #cbd0d7;
+  background: #292e36;
+  font-size: 10px;
+}
+
+.cutline-template-dialog__actions button:last-child {
+  color: #211d17;
+  border-color: #e5a748;
+  background: #e5a748;
+  font-weight: 700;
+}
+
 .cutline-sr-only {
   position: absolute;
   width: 1px;
@@ -491,7 +584,6 @@
   }
 
   .cutline-title-templates__list {
-    display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
     align-content: start;
     padding: 12px;

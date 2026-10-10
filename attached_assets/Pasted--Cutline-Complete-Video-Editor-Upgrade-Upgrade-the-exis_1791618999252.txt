@@ -1,0 +1,251 @@
+# Cutline — Complete Video Editor Upgrade
+
+Upgrade the existing Cutline video editor into a more complete, professional video editing application. Implement all the features below while preserving the current dark-and-gold theme, existing layout style, working functionality, and saved projects.
+
+**Important:** First inspect the existing codebase. Identify which features already exist, which are incomplete, and which are missing. Improve existing implementations instead of creating duplicates. Do not rebuild the application from scratch.
+
+## 1. Templates — 20 Ready-Made Designs
+
+Create a dedicated Templates section containing exactly 20 distinct, usable video design templates.
+
+Include a variety of:
+
+* Cinematic title designs
+* YouTube intro and outro designs
+* Gaming titles
+* Lower thirds and name tags
+* Animated headings
+* Subtitle designs
+* Subscribe and call-to-action overlays
+* Social media promotional designs
+* Chapter headings
+* Modern minimal text designs
+
+Requirements:
+
+* Display all 20 templates in a consistent grid with preview thumbnails, names, and categories.
+* Every template must have a genuinely distinct design, not just a different name or thumbnail.
+* Add a preview before applying a template.
+* Applying a template must create real, editable elements on the timeline, not just display a static image.
+* Allow customization of text, font, size, color, position, duration, opacity, and animation wherever applicable.
+* Ensure templates work with the actual video preview, timeline, project-saving system, and final export.
+* Use lightweight thumbnails and avoid loading all heavy assets simultaneously.
+* Do not use unlicensed copyrighted template packs.
+* Do not remove existing Titles & Texts functionality.
+
+## 2. Titles & Texts — Add 10 New Options
+
+Inspect the existing Titles & Texts section and add 10 useful options that do not duplicate existing features.
+
+Suggested options:
+
+1. Basic Title
+2. Subtitle
+3. Cinematic Title
+4. Lower Third — Name and Designation
+5. Typewriter Animation
+6. Word-by-Word Reveal
+7. Pop-In Text Animation
+8. Outline/Stroke Text
+9. Text with Background Box and Shadow
+10. Gaming-Style Animated Title
+
+Requirements:
+
+* Keep existing text presets and tools.
+* Make every new option functional in the actual preview and timeline.
+* Insert editable text elements when selected.
+* Support font, font size, color, alignment, position, opacity, duration, and animation controls where appropriate.
+* Ensure animations play correctly during preview and are rendered correctly in exported videos.
+* Do not create duplicate buttons for functionality that already exists.
+* Keep text rendering efficient and avoid unnecessary preview re-renders.
+
+## 3. Filters — Add 6 New Filters
+
+Audit the existing Filters section and add six distinct filters that are not already implemented.
+
+Suggested filters:
+
+1. Cinematic
+2. Vintage
+3. Black & White
+4. Warm
+5. Cool
+6. Film Fade
+
+Requirements:
+
+* Every filter must visibly affect the actual video frames.
+* Provide filter previews where practical.
+* Add an intensity/strength slider.
+* Allow filters to be adjusted, removed, and disabled.
+* Support combining filters where compatible.
+* Ensure the same filter settings are applied during final export.
+* Do not create duplicate filters with different names.
+* Preserve all existing filters and their settings.
+* Keep filter processing efficient for laptops with 8 GB RAM.
+
+## 4. Canvas Aspect Ratios and Social Media Formats
+
+Upgrade the existing preview canvas controls to support actual project aspect ratios separately from preview zoom.
+
+### Available canvas presets
+
+* **Landscape (16:9):** Default format for normal YouTube videos.
+* **Shorts / Portrait (9:16):** Vertical format for YouTube Shorts and Instagram Reels.
+* **Square (1:1):** Square social media videos.
+* **Instagram Portrait (4:5):** Portrait social media posts.
+* **Custom:** Custom aspect ratio and dimensions, if supported by the existing architecture.
+
+### Default Landscape
+
+* Keep Landscape (16:9) as the default for new projects.
+* Use 1920 × 1080 as the default output dimensions when appropriate.
+* Preserve the existing behavior of current landscape projects.
+
+### Shorts / Portrait
+
+* Add a clearly visible `Shorts (9:16)` option.
+* Use 1080 × 1920 as the default output dimensions when appropriate.
+* Display a vertical, phone-shaped canvas centered in the preview workspace.
+* Allow text, titles, overlays, and other elements to be positioned within the portrait canvas.
+* Preserve existing timeline content when switching formats.
+* Provide appropriate fit, crop, or background-fill options for landscape footage inside a portrait project.
+* Never stretch or distort the video to fill the canvas.
+
+### Preview zoom controls
+
+* Keep existing Fit, Fit Canvas, and 100% zoom options if they are currently supported.
+* Separate preview zoom from the actual project aspect ratio.
+* Changing zoom must not change the output dimensions.
+* Changing aspect ratio must update the project canvas and final export settings.
+
+### Export and project persistence
+
+* Save the selected aspect ratio and output dimensions with the project.
+* Restore them correctly when reopening a project.
+* Ensure preview, timeline composition, and final export use consistent dimensions.
+* Verify that exported Landscape videos are 16:9 and Shorts videos are 9:16.
+* Switching aspect ratios must not silently delete clips or reset project content.
+
+## 5. Professional Timeline Editing — Audit and Complete Missing Tools
+
+Inspect the current timeline implementation. Compare it against essential workflows in professional video editors. Do not assume a tool is missing until the codebase has been checked.
+
+### Cutting, splitting, and trimming
+
+Implement or fix the following:
+
+* Split a clip at the current playhead position.
+* Trim the beginning or end of a clip using its timeline edges.
+* Select, move, arrange, and delete clips.
+* Support accurate clip positioning and duration editing.
+* Allow clips to be split multiple times.
+* Preserve the correct source footage and playback position after splitting.
+* Ensure trimming and splitting behave consistently during playback and export.
+
+### Timeline controls
+
+* Show a clear playhead and time ruler.
+* Support timeline zooming and horizontal scrolling.
+* Support multiple video, audio, and text tracks where the existing architecture permits.
+* Allow clips to be moved between compatible tracks if supported.
+* Add snapping controls for aligning clips and the playhead.
+* Make clip selection and dragging reliable.
+* Prevent accidental movement or deletion of clips.
+* Ensure timeline updates remain synchronized with the preview.
+
+### Undo and redo
+
+* Implement functional Undo and Redo for editing actions.
+* Include clip movement, trimming, splitting, deletion, text changes, filter changes, and other supported modifications.
+* Ensure undoing and redoing an action restores the correct project state.
+* Avoid adding keyboard shortcuts that conflict with text input or browser defaults.
+
+### Playback and preview
+
+* Implement or fix Play, Pause, Seek, and playhead navigation.
+* Keep preview playback synchronized with the timeline.
+* Render video, text, titles, filters, and effects correctly.
+* Preserve the current project's FPS and resolution settings.
+* Investigate and fix existing black-preview or rendering issues without reducing export quality.
+* Keep the interface responsive while editing.
+
+## 6. Audio Editing
+
+Audit the current audio workflow and implement or fix these essential features:
+
+* Adjust clip volume.
+* Mute and unmute audio clips.
+* Trim and split audio clips.
+* Move audio clips along the timeline.
+* Display audio waveforms where supported.
+* Keep audio synchronized with video.
+* Preserve audio settings during saving, reopening, and export.
+
+Do not remove any existing audio functionality.
+
+## 7. Additional Professional Workflow Improvements
+
+* Add keyboard shortcuts for Split, Undo, Redo, Delete, Play/Pause, and Save where they do not conflict with text editing.
+* Provide clear tooltips and recognizable icons for editing controls.
+* Keep selection states and active tools visually clear.
+* Show helpful feedback when an action succeeds or fails.
+* Ensure project saving and reopening preserve timeline arrangement, clip durations, text, effects, filters, aspect ratio, and supported audio settings.
+* Avoid accidental project resets or data loss.
+* Keep all controls consistent with Cutline's existing dark-and-gold design.
+
+## 8. Performance and Compatibility
+
+Cutline must remain usable on lower-specification computers, including laptops with an Intel Core i3 processor, integrated graphics, and 8 GB RAM.
+
+* Avoid unnecessarily processing full-resolution frames during every preview update.
+* Use efficient preview scaling while preserving the selected final export resolution.
+* Avoid decoding or loading unnecessary video frames.
+* Clean up unused preview resources and event listeners.
+* Prevent unnecessary React re-renders and expensive timeline updates.
+* Use lightweight template thumbnails.
+* Avoid loading all templates and animations simultaneously.
+* Do not require a dedicated GPU for ordinary editing operations.
+* Keep editing tools modular and compatible with a potential future Windows desktop build.
+* Do not package or migrate the application to a desktop framework as part of this task.
+
+## 9. Preserve the Existing Application
+
+* Preserve the existing dark-and-gold theme.
+* Do not redesign unrelated screens.
+* Do not remove working features.
+* Do not replace functional components with mockups.
+* Do not introduce duplicate timeline, text, filter, or export implementations.
+* Do not modify or delete existing saved projects.
+* Reuse shared components and utilities wherever possible.
+* Keep existing project data compatible.
+
+## 10. Testing and Verification
+
+After implementation:
+
+1. Run type checking and relevant automated tests.
+2. Run the available production build checks.
+3. Test applying multiple templates and editing their timeline elements.
+4. Test adding, editing, moving, and deleting text elements.
+5. Test applying, adjusting, and removing filters.
+6. Test splitting, trimming, moving, undoing, and redoing clips.
+7. Test audio editing where implemented.
+8. Test saving and reopening a project without losing changes.
+9. Export a test Landscape project and verify its actual dimensions.
+10. Export a test Shorts project and verify its actual dimensions.
+11. Verify that preview and export render text and filters consistently.
+12. Check for regressions in existing features.
+
+If an interactive test cannot be performed, clearly report that limitation rather than claiming it passed.
+
+At the end, provide a concise implementation report with:
+
+* Features already present and reused
+* Features newly implemented
+* Bugs fixed
+* Tests actually completed and their results
+* Features that remain incomplete and the reason
+
+**Final priority:** Build functional editing tools, not just UI elements. Every new control must perform its intended action, and the project must remain stable, editable, and exportable.

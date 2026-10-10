@@ -252,6 +252,16 @@ export default function InspectorPanel({
           />
           <span className="cutline-inspector__range-ends"><span>Muted</span><span>200%</span></span>
         </label>}
+        {(assetKind === 'audio' || assetKind === 'video') && <label className="cutline-inspector__check">
+          <input
+            type="checkbox"
+            checked={Boolean(clip.muted)}
+            disabled={disabled}
+            onChange={(event) => onChange({ muted: event.currentTarget.checked })}
+            data-testid="check-clip-muted"
+          />
+          <span>Mute this clip's audio</span>
+        </label>}
       </section>
 
       <section className="cutline-inspector__section" aria-labelledby="inspector-transform-heading">
@@ -296,6 +306,25 @@ export default function InspectorPanel({
         <label className="cutline-inspector__field cutline-inspector__field--spaced" htmlFor={`input-title-font-${clip.id}`}>
           <span className="cutline-inspector__field-label">Font family</span>
           <input id={`input-title-font-${clip.id}`} className="cutline-inspector__number" type="text" value={clip.text.fontFamily} disabled={disabled} data-testid="input-title-font" onChange={(event) => onChange({ text: { fontFamily: event.currentTarget.value } })} />
+        </label>
+        <label className="cutline-inspector__field cutline-inspector__field--spaced" htmlFor={`select-title-animation-${clip.id}`}>
+          <span className="cutline-inspector__field-label">Text animation</span>
+          <CutlineSelect
+            id={`select-title-animation-${clip.id}`}
+            className="cutline-inspector__select"
+            value={clip.text.animation ?? 'none'}
+            options={[
+              { value: 'none', label: 'None' },
+              { value: 'fade-in', label: 'Fade in' },
+              { value: 'slide-up', label: 'Slide up' },
+              { value: 'pop-in', label: 'Pop in' },
+              { value: 'typing', label: 'Typewriter' },
+              { value: 'word-reveal', label: 'Word by word' },
+            ]}
+            disabled={disabled}
+            data-testid="select-title-animation"
+            onValueChange={(value) => onChange({ text: { animation: value as TextOverlay['animation'] } })}
+          />
         </label>
         <div className="cutline-inspector__fields">
           <label className="cutline-inspector__field" htmlFor={`input-title-size-${clip.id}`}>

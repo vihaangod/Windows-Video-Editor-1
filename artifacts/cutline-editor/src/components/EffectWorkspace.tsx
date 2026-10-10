@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Sparkles, Trash2, WandSparkles } from 'lucide-react';
-import { FILTER_PRESETS, type ClipEffects, type ClipTransition } from '@/lib/composition';
+import { FILTER_PRESETS, type ClipEffects, type ClipFilter, type ClipTransition } from '@/lib/composition';
 
 export type TransitionPresetType = 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
 
@@ -71,13 +71,34 @@ export default function EffectWorkspace({
       onTransition(transition.type, duration);
     } else if (workspace === 'filters') {
       const filter = preset as typeof FILTERS[number];
-      onEffects(filter.values);
+      const legacyStack: ClipFilter[] = selectedEffects?.filterPreset
+        ? [{ presetId: selectedEffects.filterPreset, intensity: selectedEffects.filterIntensity ?? 100, enabled: true }]
+        : [];
+      const stack = selectedEffects?.filterStack ?? legacyStack;
+      if (filter.id === 'original') {
+        onEffects({ filterStack: [], filterPreset: undefined, filterIntensity: 100 });
+      } else if (!stack.some((entry) => entry.presetId === filter.id)) {
+        onEffects({ filterStack: [...stack, { presetId: filter.id, intensity: 100, enabled: true }], filterPreset: undefined });
+      }
     } else {
       onEffects((preset as typeof EFFECTS[number]).values);
     }
   };
-  const activeFilter = selectedEffects?.filterPreset || 'original';
-  const selectedFilterLabel = FILTER_PRESETS.find((preset) => preset.id === activeFilter)?.name || 'Original';
+  const legacyStack: ClipFilter[] = selectedEffects?.filterPreset
+    ? [{ presetId: selectedEffects.filterPreset, intensity: selectedEffects.filterIntensity ?? 100, enabled: true }]
+    : [];
+  const activeFilters = selectedEffects?.filterStack ?? legacyStack;
+  const changeFilter = (presetId: string, patch: Partial<ClipFilter>) => onEffects({
+    filterStack: activeFilters.map((filter) => filter.presetId === presetId ? { ...filter, ...patch } : filter),
+    filterPreset: undefined,
+  });
+  const removeFilter = (presetId: string) => onEffects({
+    filterStack: activeFilters.filter((filter) => filter.presetId !== presetId),
+    filterPreset: undefined,
+  });
+  const selectedFilterLabel = activeFilters.length
+    ? activeFilters.map((filter) => FILTER_PRESETS.find((preset) => preset.id === filter.presetId)?.name || filter.presetId).join(' + ')
+    : 'Original';
   const updateTransitionDuration = (next: number) => {
     const clamped = Math.min(4, Math.max(.2, next));
     setDuration(clamped);
@@ -143,12 +164,22 @@ export default function EffectWorkspace({
       </section>}
       {workspace === 'filters' && <>
         <div className="cutline-filter-workspace__active">
-          <span>Selected filter</span><strong>{selectedFilterLabel}</strong>
+          <span>Active stack</span><strong>{selectedFilterLabel}</strong>
         </div>
-        {activeFilter !== 'original' && <label className="cutline-filter-workspace__intensity">
-          <span>Intensity <strong>{Math.round(selectedEffects?.filterIntensity ?? 100)}%</strong></span>
-          <input type="range" min="0" max="100" step="1" value={selectedEffects?.filterIntensity ?? 100} onChange={(event) => onEffects({ filterIntensity: Number(event.currentTarget.value) })} disabled={disabled} aria-label="Filter intensity" data-testid="slider-filter-intensity" />
-        </label>}
+        {activeFilters.map((filter) => {
+          const filterName = FILTER_PRESETS.find((preset) => preset.id === filter.presetId)?.name || filter.presetId;
+          return <div className="cutline-filter-workspace__layer" key={filter.presetId}>
+            <label className="cutline-filter-workspace__enabled">
+              <input type="checkbox" checked={filter.enabled} onChange={(event) => changeFilter(filter.presetId, { enabled: event.currentTarget.checked })} disabled={disabled} aria-label={`Enable ${filterName}`} />
+              <strong>{filterName}</strong>
+            </label>
+            <button type="button" title={`Remove ${filterName}`} aria-label={`Remove ${filterName}`} onClick={() => removeFilter(filter.presetId)} disabled={disabled} data-testid={`button-remove-filter-${filter.presetId}`}><Trash2 size={12} /></button>
+            <label className="cutline-filter-workspace__layer-intensity">
+              <span>Strength <strong>{Math.round(filter.intensity)}%</strong></span>
+              <input type="range" min="0" max="100" step="1" value={filter.intensity} onChange={(event) => changeFilter(filter.presetId, { intensity: Number(event.currentTarget.value) })} disabled={disabled} aria-label={`${filterName} strength`} data-testid={`slider-filter-intensity-${filter.presetId}`} />
+            </label>
+          </div>;
+        })}
       </>}
       <div className="cutline-effect-workspace__list">
         {visible.map((preset) => {
@@ -163,17 +194,17 @@ export default function EffectWorkspace({
             disabled={disabled}
             onClick={() => apply(preset)}
               title={disabled ? disabledReason || `Select a clip to use ${title.toLowerCase()}` : `Apply ${preset.name}`}
-            aria-pressed={workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter}
+            aria-pressed={workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id)}
             data-testid={workspace === 'filters' ? `button-filter-${(preset as typeof FILTERS[number]).id}` : undefined}
           >
-            <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample} ${workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter ? 'is-active' : ''}`} aria-hidden="true">
+            <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample} ${workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id && filter.enabled) ? 'is-active' : ''}`} aria-hidden="true">
               {thumbnail ? <img src={thumbnail} alt="" style={{ filter: previewFilter }} /> : <span />}
             </span>
             <span className="cutline-effect-card__copy">
               <strong>{preset.name}</strong>
               <small>{preset.description}</small>
             </span>
-            <span className="cutline-effect-card__apply">{workspace === 'filters' && (preset as typeof FILTERS[number]).id === activeFilter ? 'Active' : workspace === 'filters' ? 'Apply' : 'Apply'}</span>
+            <span className="cutline-effect-card__apply">{workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id) ? 'Added' : 'Apply'}</span>
           </button>
           );
         })}

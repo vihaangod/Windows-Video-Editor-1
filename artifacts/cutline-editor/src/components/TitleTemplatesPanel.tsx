@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { Plus, Search, Type } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Search, Type, X } from 'lucide-react';
+import type { TextAnimation, TextBackgroundStyle } from '@/lib/composition';
 import './title-templates-panel.css';
 
 export type TitleTemplate = {
@@ -18,9 +19,16 @@ export type TitleTemplate = {
   outlineWidth: number;
   shadow: boolean;
   opacity: number;
+  category?: string;
+  animation?: TextAnimation;
+  duration?: number;
+  fontStyle?: 'normal' | 'italic';
+  backgroundStyle?: TextBackgroundStyle;
+  previewBackground?: string;
+  letterSpacing?: string;
 };
 
-const TITLE_TEMPLATES: TitleTemplate[] = [
+export const TITLE_TEMPLATES: TitleTemplate[] = [
   {
     id: 'gaming-title',
     name: 'Gaming title',
@@ -191,7 +199,240 @@ const TITLE_TEMPLATES: TitleTemplate[] = [
     shadow: true,
     opacity: 1,
   },
+  {
+    id: 'typewriter-reveal',
+    name: 'Typewriter reveal',
+    text: 'TRANSMISSION\nINCOMING_',
+    fontFamily: 'Consolas, "Courier New", monospace',
+    fontSize: 62,
+    fontWeight: 700,
+    color: '#b7f7d2',
+    align: 'left',
+    x: 0.12,
+    y: 0.2,
+    backgroundColor: 'rgba(7, 25, 28, .84)',
+    outlineColor: '#102c2b',
+    outlineWidth: 0,
+    shadow: true,
+    opacity: 1,
+    category: 'Animated heading',
+    animation: 'typing',
+    duration: 5,
+    previewBackground: 'radial-gradient(ellipse at 68% 40%, rgba(67, 198, 151, .42), transparent 34%), linear-gradient(125deg, #132c2c, #265448 48%, #121d2a)',
+    letterSpacing: '.09em',
+  },
+  {
+    id: 'word-reveal',
+    name: 'Word-by-word reveal',
+    text: 'EVERY SECOND\nMATTERS',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 82,
+    fontWeight: 700,
+    color: '#f8ead1',
+    align: 'center',
+    x: 0.5,
+    y: 0.46,
+    backgroundColor: '',
+    outlineColor: '#251d17',
+    outlineWidth: 1,
+    shadow: true,
+    opacity: 1,
+    category: 'Animated heading',
+    animation: 'word-reveal',
+    duration: 5,
+    previewBackground: 'radial-gradient(ellipse at 50% 40%, rgba(219, 176, 113, .4), transparent 34%), linear-gradient(120deg, #55412f, #9c7552 47%, #25323a)',
+    letterSpacing: '.1em',
+  },
+  {
+    id: 'pop-in-title',
+    name: 'Pop-in title',
+    text: 'LEVEL UP',
+    fontFamily: 'Impact, "Arial Narrow", sans-serif',
+    fontSize: 116,
+    fontWeight: 900,
+    color: '#fff04e',
+    align: 'center',
+    x: 0.5,
+    y: 0.5,
+    backgroundColor: '',
+    outlineColor: '#612caa',
+    outlineWidth: 8,
+    shadow: true,
+    opacity: 1,
+    category: 'Gaming',
+    animation: 'pop-in',
+    duration: 4,
+    previewBackground: 'radial-gradient(ellipse at 50% 48%, rgba(225, 74, 208, .56), transparent 34%), linear-gradient(130deg, #292757, #654b91 44%, #172c43)',
+    letterSpacing: '.025em',
+  },
+  {
+    id: 'outline-editorial',
+    name: 'Outline editorial',
+    text: 'THE\nUNKNOWN',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: 100,
+    fontWeight: 900,
+    color: '#f7f2e9',
+    align: 'left',
+    x: 0.11,
+    y: 0.52,
+    backgroundColor: '',
+    outlineColor: '#111820',
+    outlineWidth: 4,
+    shadow: false,
+    opacity: 1,
+    category: 'Cinematic',
+    duration: 6,
+    previewBackground: 'radial-gradient(ellipse at 78% 32%, rgba(141, 164, 176, .48), transparent 30%), linear-gradient(115deg, #253540, #53616a 52%, #171f26)',
+    letterSpacing: '.16em',
+  },
+  {
+    id: 'glass-caption',
+    name: 'Glass caption',
+    text: 'A moment\nworth keeping',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 62,
+    fontWeight: 500,
+    color: '#fffaf2',
+    align: 'center',
+    x: 0.5,
+    y: 0.77,
+    backgroundColor: 'rgba(22, 29, 34, .66)',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: true,
+    opacity: 1,
+    category: 'Subtitle',
+    duration: 6,
+    backgroundStyle: { enabled: true, opacity: .82, padding: 24, radius: 22, width: 1050, height: 210, borderColor: 'rgba(255,255,255,.35)', borderWidth: 2 },
+    previewBackground: 'radial-gradient(ellipse at 66% 34%, rgba(193, 199, 178, .42), transparent 32%), linear-gradient(120deg, #40525a, #777b68 48%, #27393c)',
+  },
+  {
+    id: 'subscribe-cta',
+    name: 'Subscribe CTA',
+    text: 'SUBSCRIBE  ▶',
+    fontFamily: '"Segoe UI", Tahoma, sans-serif',
+    fontSize: 48,
+    fontWeight: 900,
+    color: '#ffffff',
+    align: 'center',
+    x: 0.5,
+    y: 0.86,
+    backgroundColor: '#c93632',
+    outlineColor: '#551916',
+    outlineWidth: 1,
+    shadow: true,
+    opacity: 1,
+    category: 'Call to action',
+    animation: 'pop-in',
+    duration: 5,
+    backgroundStyle: { enabled: true, opacity: 1, padding: 20, radius: 18, width: 520, height: 100 },
+    previewBackground: 'radial-gradient(ellipse at 48% 42%, rgba(227, 90, 69, .4), transparent 30%), linear-gradient(120deg, #31343b, #6c5145 48%, #202b34)',
+  },
+  {
+    id: 'chapter-marker',
+    name: 'Chapter marker',
+    text: 'CHAPTER 04\nTHE TURNING POINT',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 58,
+    fontWeight: 600,
+    color: '#f5ca78',
+    align: 'left',
+    x: 0.1,
+    y: 0.76,
+    backgroundColor: 'rgba(15, 20, 24, .82)',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: false,
+    opacity: 1,
+    category: 'Chapter heading',
+    animation: 'fade-in',
+    duration: 5,
+    backgroundStyle: { enabled: true, opacity: .82, padding: 22, radius: 0, width: 1120, height: 180, borderColor: '#d29343', borderWidth: 3 },
+    previewBackground: 'radial-gradient(ellipse at 72% 40%, rgba(215, 161, 87, .4), transparent 30%), linear-gradient(120deg, #313b3e, #765941 49%, #1d282f)',
+    letterSpacing: '.06em',
+  },
+  {
+    id: 'creator-lower-third',
+    name: 'Creator lower third',
+    text: 'JORDAN LEE\nCREATOR · EDITOR',
+    fontFamily: '"Segoe UI", Tahoma, sans-serif',
+    fontSize: 42,
+    fontWeight: 750,
+    color: '#f5f5f1',
+    align: 'left',
+    x: 0.12,
+    y: 0.82,
+    backgroundColor: 'rgba(16, 24, 31, .9)',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: true,
+    opacity: 1,
+    category: 'Lower third',
+    animation: 'slide-up',
+    duration: 6,
+    backgroundStyle: { enabled: true, opacity: .9, padding: 18, radius: 4, width: 720, height: 150, borderColor: '#62c3ba', borderWidth: 4 },
+    previewBackground: 'radial-gradient(ellipse at 72% 36%, rgba(87, 184, 170, .34), transparent 30%), linear-gradient(120deg, #2d4347, #556863 48%, #1c2a34)',
+  },
+  {
+    id: 'outro-endcard',
+    name: 'YouTube outro end card',
+    text: 'THANKS FOR WATCHING\nSEE YOU NEXT TIME',
+    fontFamily: '"Segoe UI", Tahoma, sans-serif',
+    fontSize: 52,
+    fontWeight: 800,
+    color: '#fff4dd',
+    align: 'center',
+    x: 0.5,
+    y: 0.5,
+    backgroundColor: 'rgba(17, 23, 33, .74)',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: true,
+    opacity: 1,
+    category: 'YouTube outro',
+    animation: 'fade-in',
+    duration: 7,
+    backgroundStyle: { enabled: true, opacity: .74, padding: 30, radius: 10, width: 1200, height: 300, borderColor: 'rgba(255,255,255,.18)', borderWidth: 1 },
+    previewBackground: 'radial-gradient(ellipse at 50% 45%, rgba(94, 124, 184, .42), transparent 33%), linear-gradient(120deg, #222f47, #536277 48%, #1a222f)',
+    letterSpacing: '.055em',
+  },
+  {
+    id: 'minimal-heading',
+    name: 'Modern minimal heading',
+    text: 'SLOW\nMORNINGS',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 96,
+    fontWeight: 400,
+    color: '#f3e8d4',
+    align: 'center',
+    x: 0.5,
+    y: 0.48,
+    backgroundColor: '',
+    outlineColor: '',
+    outlineWidth: 0,
+    shadow: false,
+    opacity: 0.94,
+    category: 'Minimal',
+    animation: 'slide-up',
+    duration: 5,
+    previewBackground: 'radial-gradient(ellipse at 52% 38%, rgba(205, 177, 132, .42), transparent 32%), linear-gradient(125deg, #5f695f, #909079 47%, #394a48)',
+    letterSpacing: '.17em',
+  },
 ];
+
+const TEMPLATE_CATEGORIES: Record<string, string> = {
+  'gaming-title': 'Cinematic title',
+  subtitle: 'Subtitle',
+  'lower-third': 'Lower third',
+  'title-card': 'Cinematic title',
+  'social-caption': 'Social media',
+  'basic-text': 'Minimal',
+  'minecraft-highlight': 'Gaming',
+  'kill-counter': 'Gaming',
+  'round-heading': 'Chapter heading',
+  'highlight-banner': 'Call to action',
+};
 
 type TitleTemplatesPanelProps = {
   onAdd: (template: TitleTemplate) => void;
@@ -205,6 +446,7 @@ function previewTextStyle(template: TitleTemplate) {
     fontFamily: template.fontFamily,
     fontSize: `clamp(9px, ${template.fontSize / 16}cqw, 27px)`,
     fontWeight: template.fontWeight,
+    fontStyle: template.fontStyle,
     textAlign: template.align,
     transform: `translate(${template.align === 'center' ? '-50%' : template.align === 'right' ? '-100%' : '0'}, -50%)`,
     opacity: template.opacity,
@@ -213,15 +455,25 @@ function previewTextStyle(template: TitleTemplate) {
       ? `${Math.max(0.5, template.outlineWidth / 4)}px ${template.outlineColor}`
       : undefined,
     textShadow: template.shadow ? '0 2px 9px rgba(0, 0, 0, .68)' : undefined,
+    letterSpacing: template.letterSpacing,
   } as const;
 }
 
 export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps) {
   const [query, setQuery] = useState('');
+  const [previewTemplate, setPreviewTemplate] = useState<TitleTemplate | null>(null);
+  useEffect(() => {
+    if (!previewTemplate) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewTemplate(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [previewTemplate]);
   const normalizedQuery = query.trim().toLowerCase();
   const visibleTemplates = useMemo(
     () => TITLE_TEMPLATES.filter((template) =>
-      `${template.name} ${template.text}`.toLowerCase().includes(normalizedQuery),
+      `${template.name} ${template.text} ${template.category || TEMPLATE_CATEGORIES[template.id] || ''}`.toLowerCase().includes(normalizedQuery),
     ),
     [normalizedQuery],
   );
@@ -274,6 +526,7 @@ export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps)
           >
             <div
               className={`cutline-template-preview cutline-template-preview--${template.id}`}
+              style={template.previewBackground ? { backgroundImage: template.previewBackground } : undefined}
               aria-label={`${template.name} preview`}
               role="img"
               data-testid={`preview-title-template-${template.id}`}
@@ -290,17 +543,16 @@ export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps)
             <div className="cutline-template-card__footer">
               <div className="cutline-template-card__copy">
                 <h3>{template.name}</h3>
-                <span>{template.fontSize}px <i aria-hidden="true">·</i> {template.align}</span>
+              <span>{template.category || TEMPLATE_CATEGORIES[template.id] || 'Title'} <i aria-hidden="true">·</i> {template.animation ? template.animation.replace('-', ' ') : 'static'}</span>
               </div>
               <button
                 type="button"
-                className="cutline-template-card__add"
-                onClick={() => onAdd({ ...template })}
-                aria-label={`Add ${template.name} to timeline`}
-                data-testid={`button-add-title-template-${template.id}`}
+              className="cutline-template-card__add"
+              onClick={() => setPreviewTemplate(template)}
+              aria-label={`Preview ${template.name}`}
+              data-testid={`button-preview-title-template-${template.id}`}
               >
-                <Plus size={15} aria-hidden="true" />
-                <span>Add</span>
+              <span>Preview</span>
               </button>
             </div>
           </article>
@@ -317,6 +569,29 @@ export default function TitleTemplatesPanel({ onAdd }: TitleTemplatesPanelProps)
         )}
       </div>
       <p className="cutline-title-templates__footnote">Add a title, then adjust its timing in the timeline.</p>
+      {previewTemplate && <div className="cutline-template-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewTemplate(null); }}>
+        <section className="cutline-template-dialog" role="dialog" aria-modal="true" aria-label={`${previewTemplate.name} preview`}>
+          <header>
+            <div><span>{previewTemplate.category || TEMPLATE_CATEGORIES[previewTemplate.id] || 'Title'}</span><h3>{previewTemplate.name}</h3></div>
+            <button type="button" aria-label="Close preview" onClick={() => setPreviewTemplate(null)}><X size={16} /></button>
+          </header>
+          <div
+            className={`cutline-template-preview cutline-template-preview--${previewTemplate.id} cutline-template-dialog__preview`}
+            style={previewTemplate.previewBackground ? { backgroundImage: previewTemplate.previewBackground } : undefined}
+            role="img"
+            aria-label={`Design preview: ${previewTemplate.text.replaceAll('\n', ' ')}`}
+          >
+            <span className="cutline-template-preview__text" style={previewTextStyle(previewTemplate)}>
+              {previewTemplate.text.split('\n').map((line, lineIndex) => <span key={`${previewTemplate.id}-dialog-line-${lineIndex}`}>{line}</span>)}
+            </span>
+          </div>
+          <p>Editable text clip · {previewTemplate.duration ?? 5}s · {previewTemplate.animation || 'No animation'}</p>
+          <div className="cutline-template-dialog__actions">
+            <button type="button" onClick={() => setPreviewTemplate(null)}>Cancel</button>
+            <button type="button" onClick={() => { onAdd({ ...previewTemplate }); setPreviewTemplate(null); }} data-testid={`button-add-title-template-${previewTemplate.id}`}><Plus size={14} />Add to timeline</button>
+          </div>
+        </section>
+      </div>}
     </section>
   );
 }

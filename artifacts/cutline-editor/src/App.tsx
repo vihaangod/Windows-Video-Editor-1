@@ -2,7 +2,7 @@ import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent a
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen, Grid2X2,
-  HardDrive, Info, Layers2, LockKeyhole, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
+  HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
   RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
@@ -45,6 +45,30 @@ const DEFAULT_TRACKS: Track[] = [
 ];
 const TRACK_LABEL_WIDTH = 198;
 const AUTOSAVE_DELAY_MS = 500;
+const CANVAS_ASPECTS = [
+  { id: 'landscape', label: 'Landscape · 16:9', width: 1920, height: 1080 },
+  { id: 'shorts', label: 'Shorts · 9:16', width: 1080, height: 1920 },
+  { id: 'square', label: 'Square · 1:1', width: 1080, height: 1080 },
+  { id: 'portrait', label: 'Instagram portrait · 4:5', width: 1080, height: 1350 },
+] as const;
+const CANVAS_SIZES = [
+  { value: '3840x2160', label: '3840 × 2160 · 4K' },
+  { value: '2560x1440', label: '2560 × 1440 · 1440p' },
+  { value: '1920x1080', label: '1920 × 1080 · 1080p' },
+  { value: '1280x720', label: '1280 × 720 · 720p' },
+  { value: '854x480', label: '854 × 480 · 480p' },
+  { value: '1080x1920', label: '1080 × 1920 · Shorts' },
+  { value: '1080x1080', label: '1080 × 1080 · Square' },
+  { value: '1080x1350', label: '1080 × 1350 · 4:5 portrait' },
+] as const;
+const getCanvasAspectId = (width: number, height: number) => {
+  const ratio = width / Math.max(1, height);
+  return CANVAS_ASPECTS.find((preset) => Math.abs(ratio - preset.width / preset.height) < .012)?.id || 'custom';
+};
+const getCanvasSizeValue = (width: number, height: number) => {
+  const value = `${width}x${height}`;
+  return CANVAS_SIZES.some((preset) => preset.value === value) ? value : 'custom';
+};
 type LibraryWorkspace = 'media' | 'audio' | 'overlays' | 'text' | 'effects' | 'transitions' | 'filters' | 'markup' | 'templates';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 type ProjectSaveSnapshot = { project: Project; assets: Asset[] };
@@ -423,6 +447,9 @@ function Home() {
   const [exportName, setExportName] = useState('cutline-export');
   const [format, setFormat] = useState<'mp4' | 'webm'>('mp4');
   const [zoom, setZoom] = useState(1);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [customCanvasMode, setCustomCanvasMode] = useState(false);
+  const [customCanvas, setCustomCanvas] = useState({ width: String(project.width), height: String(project.height) });
   const [timelineDragEnd, setTimelineDragEnd] = useState<number | null>(null);
   const [, setHistoryRevision] = useState(0);
   const [mediaRevision, setMediaRevision] = useState(0);
@@ -468,6 +495,8 @@ function Home() {
   const exportCancelRequested = useRef(false);
   const isPlayingRef = useRef(false);
   const projectRef = useRef(project);
+  useEffect(() => setCustomCanvas({ width: String(project.width), height: String(project.height) }), [project.width, project.height]);
+  useEffect(() => setCustomCanvasMode(false), [project.id]);
   projectRef.current = project;
   const assetsRef = useRef(assets);
   assetsRef.current = assets;
@@ -939,7 +968,7 @@ function Home() {
       const track = project.tracks.find((item) => item.id === clip.trackId);
       if (!audio || !track) continue;
       const duration = getClipDuration(clip);
-      const active = !track.muted && playhead >= clip.timelineStart && playhead < clip.timelineStart + duration;
+      const active = !track.muted && !clip.muted && playhead >= clip.timelineStart && playhead < clip.timelineStart + duration;
       if (!active) {
         audio.pause();
         continue;
@@ -1120,7 +1149,7 @@ function Home() {
       trackId: track.id,
       timelineStart: Math.max(0, playhead),
       sourceIn: 0,
-      sourceOut: 5,
+      sourceOut: template.duration ?? 5,
       volume: 0,
       speed: 1,
       transform: { ...DEFAULT_TRANSFORM },
@@ -1133,6 +1162,7 @@ function Home() {
         templateName: template.name,
         content: template.text,
         fontFamily: template.fontFamily,
+        ...(template.fontStyle ? { fontStyle: template.fontStyle } : {}),
         fontSize: template.fontSize,
         fontWeight: template.fontWeight,
         color: template.color,
@@ -1144,6 +1174,8 @@ function Home() {
         outlineWidth: template.outlineWidth,
         shadow: template.shadow,
         opacity: template.opacity,
+        ...(template.animation ? { animation: template.animation } : {}),
+        ...(template.backgroundStyle ? { backgroundStyle: { ...template.backgroundStyle } } : {}),
       },
     };
     commit((current) => ({
@@ -1191,14 +1223,15 @@ function Home() {
   const trimAtPlayhead = (side: 'start' | 'end') => {
     if (!selectedClip) return;
     if (selectedClipLocked) { notify('Unlock this track before trimming.', true); return; }
+    const trimPosition = snapTimelineTime(playhead, selectedClip.id);
     const clipEnd = selectedClip.timelineStart + getClipDuration(selectedClip);
     if (side === 'start') {
-      const delta = playhead - selectedClip.timelineStart;
+      const delta = trimPosition - selectedClip.timelineStart;
       if (delta <= 0 || delta >= clipEnd - selectedClip.timelineStart - .08) { notify('Move the playhead inside the clip before trimming.', true); return; }
-      commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceIn: clip.sourceIn + delta * clip.speed, timelineStart: playhead } : clip) }));
+      commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceIn: clip.sourceIn + delta * clip.speed, timelineStart: trimPosition } : clip) }));
     } else {
-      if (playhead <= selectedClip.timelineStart + .08 || playhead >= clipEnd) { notify('Move the playhead inside the clip before trimming.', true); return; }
-      commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceOut: clip.sourceIn + (playhead - clip.timelineStart) * clip.speed } : clip) }));
+      if (trimPosition <= selectedClip.timelineStart + .08 || trimPosition >= clipEnd) { notify('Move the playhead inside the clip before trimming.', true); return; }
+      commit((current) => ({ ...current, clips: current.clips.map((clip) => clip.id === selectedClip.id ? { ...clip, sourceOut: clip.sourceIn + (trimPosition - clip.timelineStart) * clip.speed } : clip) }));
     }
   };
   const removeSelected = () => {
@@ -1291,13 +1324,16 @@ function Home() {
     let updated: Clip;
     if (drag.edge === 'start') {
       const duration = getClipDuration(initial);
-      const nextStart = Math.max(0, Math.min(initial.timelineStart + duration - .08, initial.timelineStart + deltaSeconds));
+      const rawStart = Math.max(0, Math.min(initial.timelineStart + duration - .08, initial.timelineStart + deltaSeconds));
+      const nextStart = Math.max(0, Math.min(initial.timelineStart + duration - .08, snapTimelineTime(rawStart, initial.id)));
       const sourceDelta = (nextStart - initial.timelineStart) * initial.speed;
       updated = { ...initial, timelineStart: nextStart, sourceIn: Math.max(0, Math.min(initial.sourceOut - minSourceLength, initial.sourceIn + sourceDelta)) };
     } else {
       const asset = assets.find((item) => item.id === initial.assetId);
       const maxSourceTime = Math.max(initial.sourceOut, asset?.duration || 0);
-      const sourceOut = Math.max(initial.sourceIn + minSourceLength, Math.min(maxSourceTime, initial.sourceOut + deltaSeconds * initial.speed));
+      const rawEnd = initial.timelineStart + getClipDuration(initial) + deltaSeconds;
+      const snappedEnd = snapTimelineTime(rawEnd, initial.id);
+      const sourceOut = Math.max(initial.sourceIn + minSourceLength, Math.min(maxSourceTime, initial.sourceIn + Math.max(.08, snappedEnd - initial.timelineStart) * initial.speed));
       updated = { ...initial, sourceOut };
     }
     setProject((current) => ({
@@ -1780,6 +1816,7 @@ function Home() {
     }
   };
   const snapTimelineTime = (time: number, ignoreClipId?: string) => {
+    if (!snapEnabled) return time;
     const targets = [0, Math.round(time / 5) * 5];
     for (const clip of projectRef.current.clips) {
       if (clip.id === ignoreClipId) continue;
@@ -1787,6 +1824,18 @@ function Home() {
     }
     const nearest = targets.reduce((best, candidate) => Math.abs(candidate - time) < Math.abs(best - time) ? candidate : best, time);
     return Math.abs(nearest - time) <= .14 ? nearest : time;
+  };
+  const commitCustomCanvasDimension = (dimension: 'width' | 'height') => {
+    const input = customCanvas[dimension].trim();
+    const parsed = Number(input);
+    if (!input || !Number.isFinite(parsed)) {
+      setCustomCanvas({ width: String(projectRef.current.width), height: String(projectRef.current.height) });
+      return;
+    }
+    const value = Math.max(144, Math.min(3840, Math.round(parsed / 2) * 2));
+    setCustomCanvas((current) => ({ ...current, [dimension]: String(value) }));
+    setCustomCanvasMode(true);
+    commit((current) => ({ ...current, [dimension]: value }));
   };
 
   const getPreviewPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -2121,7 +2170,7 @@ function Home() {
         const asset = renderIndex.assetsById.get(clip.assetId);
         const track = renderIndex.tracksById.get(clip.trackId);
         const sourceHasAudio = Boolean(asset && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false)));
-        return Boolean(asset && track && !track.muted && sourceHasAudio &&
+        return Boolean(asset && track && !clip.muted && !track.muted && sourceHasAudio &&
           (track.kind === 'audio' || (track.kind === 'video' && !clip.audioOnly)));
       });
       if (clipsWithAudio.length) {
@@ -2132,7 +2181,7 @@ function Home() {
           const asset = renderIndex.assetsById.get(clip.assetId);
           const track = renderIndex.tracksById.get(clip.trackId);
           const sourceHasAudio = Boolean(asset && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false)));
-          if (!asset || !track || track.muted || !sourceHasAudio ||
+          if (!asset || !track || clip.muted || track.muted || !sourceHasAudio ||
             (track.kind !== 'audio' && (track.kind !== 'video' || clip.audioOnly))) continue;
           const media = document.createElement('audio');
           media.preload = 'metadata';
@@ -2221,7 +2270,7 @@ function Home() {
                 if (Math.abs(media.currentTime - desired) > .35) {
                   try { media.currentTime = desired; } catch { /* media metadata may still be loading */ }
                 }
-                gain.gain.value = clip.volume * getAudioFade(clip, t);
+                gain.gain.value = (clip.muted ? 0 : clip.volume) * getAudioFade(clip, t);
                 media.playbackRate = clip.speed;
                 if (media.paused) void media.play().catch((error: unknown) => { failureFromAudio = error; });
               } else if (!media.paused) media.pause();
@@ -2537,21 +2586,48 @@ function Home() {
             <span className="divider" />
             <label>Canvas</label>
             <CutlineSelect
-              aria-label="Project resolution"
-              value={`${project.width}x${project.height}`}
+              aria-label="Canvas aspect ratio"
+              value={customCanvasMode ? 'custom' : getCanvasAspectId(project.width, project.height)}
               options={[
-                { value: '3840x2160', label: '2160p · 4K' },
-                { value: '2560x1440', label: '1440p' },
-                { value: '1920x1080', label: '1080p' },
-                { value: '1280x720', label: '720p' },
-                { value: '854x480', label: '480p' },
+                ...CANVAS_ASPECTS.map(({ id, label }) => ({ value: id, label })),
+                { value: 'custom', label: 'Custom ratio' },
               ]}
               onValueChange={(value) => {
+                if (value === 'custom') {
+                  setCustomCanvasMode(true);
+                  return;
+                }
+                const preset = CANVAS_ASPECTS.find((item) => item.id === value);
+                if (!preset) return;
+                setCustomCanvasMode(false);
+                commit((current) => ({ ...current, width: preset.width, height: preset.height }));
+              }}
+              data-testid="select-canvas-aspect"
+            />
+            <CutlineSelect
+              aria-label="Project resolution"
+              value={getCanvasSizeValue(project.width, project.height)}
+              options={[
+                ...CANVAS_SIZES.map(({ value, label }) => ({ value, label })),
+                { value: 'custom', label: 'Custom dimensions' },
+              ]}
+              onValueChange={(value) => {
+                if (value === 'custom') {
+                  setCustomCanvasMode(true);
+                  setCustomCanvas({ width: String(project.width), height: String(project.height) });
+                  return;
+                }
                 const [width, height] = value.split('x').map(Number);
+                setCustomCanvasMode(false);
                 commit((current) => ({ ...current, width, height }));
               }}
               data-testid="select-resolution"
             />
+            {customCanvasMode && <div className="canvas-custom-dimensions" role="group" aria-label="Custom canvas dimensions">
+              <label>W<input aria-label="Custom canvas width" type="number" min="144" max="3840" step="2" value={customCanvas.width} onChange={(event) => setCustomCanvas((current) => ({ ...current, width: event.currentTarget.value }))} onBlur={() => commitCustomCanvasDimension('width')} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} data-testid="input-custom-canvas-width" /></label>
+              <span aria-hidden="true">×</span>
+              <label>H<input aria-label="Custom canvas height" type="number" min="144" max="3840" step="2" value={customCanvas.height} onChange={(event) => setCustomCanvas((current) => ({ ...current, height: event.currentTarget.value }))} onBlur={() => commitCustomCanvasDimension('height')} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} data-testid="input-custom-canvas-height" /></label>
+            </div>}
             <CutlineSelect
               aria-label="Project frame rate"
               value={String(project.frameRate)}
@@ -2633,6 +2709,8 @@ function Home() {
           {selectedClip && <label className="clip-volume">Clip gain
             <input aria-label="Selected clip volume" type="range" min="0" max="2" step=".01" value={selectedClip.volume} disabled={selectedClipLocked} onChange={(event) => updateSelectedClip({ volume: Number(event.target.value) })} data-testid="input-clip-volume" />
           </label>}
+          {selectedClip?.assetId && <button className={`icon-btn ${selectedClip.muted ? 'active' : ''}`} title={selectedClip.muted ? 'Unmute selected clip audio' : 'Mute selected clip audio'} aria-label={selectedClip.muted ? 'Unmute selected clip audio' : 'Mute selected clip audio'} aria-pressed={Boolean(selectedClip.muted)} disabled={selectedClipLocked} onClick={() => updateSelectedClip({ muted: !selectedClip.muted })} data-testid="button-mute-selected-clip">{selectedClip.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}</button>}
+          <button className={`icon-btn ${snapEnabled ? 'active' : ''}`} title={snapEnabled ? 'Snapping on — click to turn off' : 'Snapping off — click to turn on'} aria-label="Toggle timeline snapping" aria-pressed={snapEnabled} onClick={() => setSnapEnabled((value) => !value)} data-testid="button-toggle-snapping"><Magnet size={13} /></button>
           <button className="icon-btn" title="Zoom out timeline" aria-label="Zoom out timeline" disabled={zoom <= MIN_TIMELINE_ZOOM} onClick={() => setZoom((value) => adjustTimelineZoom(value, -1))} data-testid="button-zoom-out"><Minus size={14} /></button>
           <span className="timeline-zoom-value" aria-live="polite">{Math.round(zoom * 100)}%</span>
           <button className="icon-btn" title="Zoom in timeline" aria-label="Zoom in timeline" disabled={zoom >= MAX_TIMELINE_ZOOM} onClick={() => setZoom((value) => adjustTimelineZoom(value, 1))} data-testid="button-zoom-in"><Plus size={14} /></button>
@@ -2668,7 +2746,7 @@ function Home() {
                 }} onClick={(event) => {
                   if ((event.target as HTMLElement).closest('.clip')) return;
                   const rect = event.currentTarget.getBoundingClientRect();
-                  setPlayhead(Math.max(0, (event.clientX - rect.left) / scale));
+                  setPlayhead(snapTimelineTime(Math.max(0, (event.clientX - rect.left) / scale)));
                 }} data-testid={`lane-track-${track.id}`}>
                   {(project.transitions || []).filter((transition) => {
                     const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
