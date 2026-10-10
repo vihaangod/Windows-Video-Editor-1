@@ -121,9 +121,10 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .timeline-head { height:43px; display:flex; align-items:center; padding:0 12px; gap:8px; border-bottom:1px solid #30353e; }
 .timeline-label { font-size:11px; text-transform:uppercase; font-weight:800; letter-spacing:.09em; color:#d4d7da; margin-right:4px; }
 .timeline-head .minor { color:#7e8791; font-size:10px; margin-left:auto; margin-right:5px; }
+.timeline-zoom-value { min-width:34px; color:#929ba5; text-align:center; font:9px var(--app-font-mono); }
 .clip-volume { display:flex; align-items:center; gap:6px; color:#8f97a0; font-size:9px; white-space:nowrap; }
 .clip-volume input { width:66px; accent-color:#edb94e; }
-.tracks-scroll { position:relative; overflow:auto; flex:1; min-height:0; }
+.tracks-scroll { position:relative; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#505762 transparent; flex:1; min-height:0; }
 .timeline-inner { min-width:100%; position:relative; }
 .ruler { height:27px; margin-left:198px; position:relative; border-bottom:1px solid #343a44; background:#1d2229; }
 .tick { position:absolute; top:0; height:100%; border-left:1px solid #424852; color:#87909a; padding:4px 0 0 5px; font:9px var(--app-font-mono); }
@@ -159,7 +160,8 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .dialog label { display:block; margin:15px 0 6px; font-size:10px; color:#aeb4bb; }
 .dialog input,.dialog select { width:100%; height:36px; padding:0 10px; background:#171a20; color:#e7e9ea; border:1px solid #414852; border-radius:5px; outline:none; font-size:11px; }
 .dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:21px; }
-.progress-track { height:5px; background:#343a43; border-radius:5px; margin-top:14px; overflow:hidden; }.progress-track span { display:block; height:100%; background:#edb94e; transition:width .15s linear; }
+.export-progress-meta { display:flex; justify-content:space-between; margin-top:14px; color:#aab1b9; font:10px var(--app-font-mono); }
+.progress-track { height:6px; background:#343a43; border-radius:5px; margin-top:6px; overflow:hidden; }.progress-track span { display:block; height:100%; background:#edb94e; transition:width .15s linear; }
 .drop-active:after { content:'Drop local media to import'; position:fixed; z-index:10; inset:12px; display:grid; place-items:center; color:#f2c45d; font-size:24px; font-weight:800; background:rgba(30,35,42,.92); border:2px dashed #d2a849; border-radius:12px; pointer-events:none; }
 .cutline-context-menu { position:fixed; z-index:60; width:240px; max-height:min(360px,calc(100dvh - 16px)); overflow:auto; padding:5px; border:1px solid #414852; border-radius:7px; background:#22262e; box-shadow:0 14px 40px #0009; }
 .cutline-context-menu__item { width:100%; min-height:34px; display:flex; align-items:center; gap:9px; padding:0 9px; border:0; border-radius:4px; color:#d7dbe0; background:transparent; text-align:left; font-size:11px; }

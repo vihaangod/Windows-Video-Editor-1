@@ -140,6 +140,20 @@ export type Asset = {
 };
 
 export type AssetMetadata = Omit<Asset, 'blob'>;
+
+export type ProjectRenderIndex = {
+  assetsById: ReadonlyMap<string, Asset>;
+  tracksById: ReadonlyMap<string, Track>;
+  clipsById: ReadonlyMap<string, Clip>;
+};
+
+export function createProjectRenderIndex(project: Project, assets: Asset[]): ProjectRenderIndex {
+  return {
+    assetsById: new Map(assets.map((asset) => [asset.id, asset])),
+    tracksById: new Map(project.tracks.map((track) => [track.id, track])),
+    clipsById: new Map(project.clips.map((clip) => [clip.id, clip])),
+  };
+}
 export type SavedProject = { project: Project; assets: AssetMetadata[]; savedAt: number };
 
 export const DEFAULT_TRANSFORM: ClipTransform = {
@@ -599,6 +613,7 @@ export function renderProjectFrame(
   playing: boolean,
   selectedClipId?: string | null,
   markupDraft?: MarkupDrawing | null,
+  renderIndex?: ProjectRenderIndex,
 ) {
   context.save();
   context.filter = 'none';
@@ -607,13 +622,19 @@ export function renderProjectFrame(
   context.fillRect(0, 0, project.width, project.height);
 
   const activeVisual = project.clips.filter((clip) => {
-    const track = project.tracks.find((item) => item.id === clip.trackId);
+    const track = renderIndex
+      ? renderIndex.tracksById.get(clip.trackId)
+      : project.tracks.find((item) => item.id === clip.trackId);
     if (!track || (track.kind !== 'video' && track.kind !== 'text')) return false;
     return track.visible !== false && time >= clip.timelineStart && time < clip.timelineStart + getClipDuration(clip);
   });
   const activeTransitions = (project.transitions || []).flatMap((transition) => {
-    const fromClip = project.clips.find((clip) => clip.id === transition.fromClipId);
-    const toClip = project.clips.find((clip) => clip.id === transition.toClipId);
+    const fromClip = renderIndex
+      ? renderIndex.clipsById.get(transition.fromClipId)
+      : project.clips.find((clip) => clip.id === transition.fromClipId);
+    const toClip = renderIndex
+      ? renderIndex.clipsById.get(transition.toClipId)
+      : project.clips.find((clip) => clip.id === transition.toClipId);
     if (!fromClip || !toClip) return [];
     const fromEnd = fromClip.timelineStart + getClipDuration(fromClip);
     if (Math.abs(fromEnd - toClip.timelineStart) > .05) return [];
@@ -628,8 +649,12 @@ export function renderProjectFrame(
   const transitionForClip = new Map(activeTransitions.flatMap((active) => [[active.fromClip.id, active], [active.toClip.id, active]]));
   const renderClips = [...new Map([...activeVisual, ...activeTransitions.flatMap(({ fromClip, toClip }) => [fromClip, toClip])].map((clip) => [clip.id, clip])).values()].sort((a, b) => {
     if (Boolean(a.text) !== Boolean(b.text)) return a.text ? 1 : -1;
-    const orderA = project.tracks.find((track) => track.id === a.trackId)?.order ?? 0;
-    const orderB = project.tracks.find((track) => track.id === b.trackId)?.order ?? 0;
+    const orderA = (renderIndex
+      ? renderIndex.tracksById.get(a.trackId)
+      : project.tracks.find((track) => track.id === a.trackId))?.order ?? 0;
+    const orderB = (renderIndex
+      ? renderIndex.tracksById.get(b.trackId)
+      : project.tracks.find((track) => track.id === b.trackId))?.order ?? 0;
     return orderA - orderB || a.timelineStart - b.timelineStart;
   });
   const activeAssetIds = new Set<string>();
@@ -641,8 +666,12 @@ export function renderProjectFrame(
       if (renderedTransitionIds.has(transitionId)) continue;
       renderedTransitionIds.add(transitionId);
       const { fromClip, toClip, progress, boundary, transition } = activeTransition;
-      const fromAsset = assets.find((asset) => asset.id === fromClip.assetId);
-      const toAsset = assets.find((asset) => asset.id === toClip.assetId);
+       const fromAsset = renderIndex
+         ? renderIndex.assetsById.get(fromClip.assetId || '')
+         : assets.find((asset) => asset.id === fromClip.assetId);
+       const toAsset = renderIndex
+         ? renderIndex.assetsById.get(toClip.assetId || '')
+         : assets.find((asset) => asset.id === toClip.assetId);
       const fromSource = fromClip.assetId ? mediaByAsset.get(fromClip.assetId) : undefined;
       const toSource = toClip.assetId ? mediaByAsset.get(toClip.assetId) : undefined;
       if (!fromAsset || !toAsset || !fromSource || !toSource) continue;
@@ -692,7 +721,9 @@ export function renderProjectFrame(
     }
     if (!clip.assetId) continue;
     activeAssetIds.add(clip.assetId);
-    const asset = assets.find((item) => item.id === clip.assetId);
+    const asset = renderIndex
+      ? renderIndex.assetsById.get(clip.assetId)
+      : assets.find((item) => item.id === clip.assetId);
     const source = mediaByAsset.get(clip.assetId);
     if (asset && source) drawMedia(context, clip, asset, source, time, project, playing);
   }

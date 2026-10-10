@@ -1,0 +1,50 @@
+## Cutline: Improve Export Speed + Fix Timeline Duration and Zoom
+
+Fix the existing Cutline Video Editor. Preserve the current UI, project data, and all existing editing features.
+
+### 1. Optimize Export Speed
+
+My editor exports locally in the browser using WebCodecs. Exporting at 4K (3840×2160), 60 FPS is extremely slow, and previous export attempts have stopped unexpectedly.
+
+Optimize the existing rendering pipeline without reducing the user's selected output quality.
+
+* Use hardware-accelerated encoding when the browser supports it, with reliable fallback to supported encoders.
+* Avoid unnecessary frame conversions, repeated decoding, duplicate rendering, and redundant processing.
+* Cache or reuse decoded frames where appropriate, especially for transitions and effects.
+* Optimize filter, color-adjustment, text-overlay, and transition rendering.
+* Process frames in controlled batches and release temporary memory safely.
+* Keep the UI responsive and show accurate export progress, elapsed time, and errors.
+* Handle browser memory limits and encoder failures gracefully. Never silently reset progress or pretend a failed export succeeded.
+* Use efficient streaming or chunked output where supported, rather than storing the entire rendered video in memory.
+* Preserve audio synchronization, embedded audio, transitions, effects, and text overlays in the exported file.
+* Keep the selected resolution, FPS, and format unchanged unless the user explicitly changes them.
+* Do not claim hardware acceleration is active unless it is actually being used.
+
+### 2. Fix the Timeline's 30-Second Limitation
+
+Currently, the timeline ruler displays only approximately 00:30, making longer projects difficult to edit.
+
+The timeline must support videos lasting seconds, minutes, or multiple hours.
+
+* Remove any hardcoded 30-second timeline width or maximum-duration assumption.
+* Calculate the timeline duration dynamically from the actual project content, clip positions, and durations.
+* Allow clips to extend beyond the initially visible timeline area.
+* Add smooth horizontal scrolling for long projects.
+* Add working timeline zoom-in and zoom-out controls.
+* Automatically adjust ruler labels and time markers based on zoom level.
+* Support accurate clip placement, dragging, trimming, splitting, and seeking at long timestamps.
+* Preserve audio/video synchronization and all existing track behavior.
+* Ensure adding a long video or moving a clip far along the timeline expands the usable timeline instead of clipping it at 30 seconds.
+* Avoid rendering thousands of unnecessary timeline elements at once; use efficient rendering for long projects.
+
+### 3. Testing Requirements
+
+Test with:
+
+1. A short video with transitions, filters, text, and audio.
+2. A 10-minute timeline.
+3. A project with clips positioned beyond the 30-minute mark.
+4. A multi-hour timeline with zooming and horizontal scrolling.
+5. A 4K 60 FPS export, verifying that failures are reported clearly and successful exports preserve audio and visual effects.
+
+Inspect the actual code and fix the underlying problems. Do not merely change the timeline ruler labels or simulate faster export progress. Keep all existing projects compatible.
