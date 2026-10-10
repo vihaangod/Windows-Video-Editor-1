@@ -43,6 +43,7 @@ type Notice = { message: string; error?: boolean };
 const DB_NAME = 'cutline-local-editor-v1';
 const DB_VERSION = 4;
 const EXPANDED_PROJECT_FOLDERS_KEY = 'cutline-project-library-expanded-folders-v1';
+const LAST_ACTIVE_PROJECT_KEY = 'cutline-last-active-project-v1';
 const LEGACY_STORE = 'projects';
 const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
@@ -772,6 +773,9 @@ function Home() {
   const [exportDirectory, setExportDirectory] = useState<WritableDirectoryHandle | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [mediaImporting, setMediaImporting] = useState(false);
+  const mediaImportCountRef = useRef(0);
+  const mediaImportingRef = useRef(false);
+  const desktopCloseRequestedRef = useRef(false);
   const [saveState, setSaveState] = useState<SaveState>('saving');
   const [markupTool, setMarkupTool] = useState<MarkupToolMode>('pen');
   const [markupColor, setMarkupColor] = useState('#ff3b30');
@@ -864,6 +868,32 @@ function Home() {
     if (!saveQueue.current) throw new Error('Project save queue is unavailable.');
     return saveQueue.current({ project: nextProject, assets: nextAssets, selection: { ...selection } });
   }, []);
+  const rememberActiveProject = useCallback((projectId: string) => {
+    try {
+      window.localStorage.setItem(LAST_ACTIVE_PROJECT_KEY, projectId);
+    } catch {
+      // Project content remains in IndexedDB if the preference store is unavailable.
+    }
+  }, []);
+  const beginMediaImport = () => {
+    mediaImportCountRef.current += 1;
+    mediaImportingRef.current = true;
+    setMediaImporting(true);
+  };
+  const endMediaImport = () => {
+    mediaImportCountRef.current = Math.max(0, mediaImportCountRef.current - 1);
+    mediaImportingRef.current = mediaImportCountRef.current > 0;
+    setMediaImporting(mediaImportingRef.current);
+  };
+  const clearRememberedProject = useCallback((projectId: string) => {
+    try {
+      if (window.localStorage.getItem(LAST_ACTIVE_PROJECT_KEY) === projectId) {
+        window.localStorage.removeItem(LAST_ACTIVE_PROJECT_KEY);
+      }
+    } catch {
+      // A stale resume preference is harmless when local storage is unavailable.
+    }
+  }, []);
   const getAudioRef = (clipId: string) => {
     let callback = audioRefCallbacks.current.get(clipId);
     if (!callback) {
@@ -925,24 +955,55 @@ function Home() {
 
   useEffect(() => {
     let alive = true;
+    let restoredLastProject = false;
     void (async () => {
       try {
         const [records, folders] = await Promise.all([readLocalProjects(), readLocalFolders()]);
         if (!alive) return;
         setSavedProjects(records);
         setProjectFolders(folders);
+        let rememberedProjectId: string | null = null;
+        try {
+          rememberedProjectId = window.localStorage.getItem(LAST_ACTIVE_PROJECT_KEY);
+        } catch {
+          // Continue to the project library if the preference store is unavailable.
+        }
+        const rememberedProject = records.find((record) => record.project.id === rememberedProjectId);
+        if (rememberedProject) {
+          const localAssets = await readLocalMedia(rememberedProject.project.id);
+          if (!alive) return;
+          const selection = restoreProjectSelection(rememberedProject.project, localAssets, rememberedProject.selection);
+          projectRef.current = rememberedProject.project;
+          assetsRef.current = localAssets;
+          selectionRef.current = selection;
+          persistedSnapshot.current = {
+            project: rememberedProject.project,
+            assets: localAssets,
+            selection,
+          };
+          setProject(rememberedProject.project);
+          setAssets(localAssets);
+          setSelectedClipId(selection.clipId);
+          setSelectedAssetId(selection.assetId);
+          setPlayhead(0);
+          setHasActiveProject(true);
+          setSaveState('saved');
+          restoredLastProject = true;
+        } else if (rememberedProjectId) {
+          clearRememberedProject(rememberedProjectId);
+        }
       } catch {
         if (alive) notify('Local project storage is unavailable in this browser.', true);
       } finally {
         if (alive) {
-          setSaveState('saved');
-          setDialog('project');
+          if (!restoredLastProject) setSaveState('saved');
+          setDialog(restoredLastProject ? null : 'project');
           setProjectHydrated(true);
         }
       }
     })();
     return () => { alive = false; };
-  }, [notify]);
+  }, [clearRememberedProject, notify]);
 
   useEffect(() => {
     if (!projectHydrated || !hasActiveProject) return;
@@ -1457,7 +1518,11 @@ function Home() {
   }, [exporting]);
 
   const importFiles = useCallback(async (files: FileList | File[]) => {
-    setMediaImporting(true);
+    if (window.cutlineDesktop && desktopCloseRequestedRef.current) {
+      notify('Wait until the desktop close prompt finishes before importing more media.', true);
+      return false;
+    }
+    beginMediaImport();
     const targetProjectId = projectRef.current.id;
     const additions: Asset[] = [];
     let importComplete = false;
@@ -1498,22 +1563,52 @@ function Home() {
         notify(`${additions.length} file${additions.length === 1 ? '' : 's'} added to this device's media bin.${audioNote}`);
       }
     } finally {
-      setMediaImporting(false);
+      endMediaImport();
     }
     return importComplete;
   }, [notify]);
+  const chooseMediaFiles = async () => {
+    const desktop = window.cutlineDesktop;
+    if (!desktop) {
+      fileInput.current?.click();
+      return;
+    }
+    if (mediaImporting || desktopCloseRequestedRef.current) return;
+    beginMediaImport();
+    let selectedFiles: Awaited<ReturnType<typeof desktop.pickMediaFiles>> = [];
+    try {
+      selectedFiles = await desktop.pickMediaFiles();
+      if (!selectedFiles.length) return;
+
+      for (const selected of selectedFiles) {
+        const response = await fetch(selected.url);
+        if (!response.ok) throw new Error(`Could not read “${selected.name}” from its selected source file.`);
+        const blob = await response.blob();
+        if (blob.size !== selected.byteSize) {
+          throw new Error(`The selected source file “${selected.name}” changed while it was being imported.`);
+        }
+        const imported = await importFiles([new File([blob], selected.name, { type: selected.mimeType })]);
+        if (!imported) return;
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not import the selected media files.', true);
+    } finally {
+      void desktop.releaseMediaFiles(selectedFiles.map((file) => file.token)).catch(() => undefined);
+      endMediaImport();
+    }
+  };
   const relinkMissingAsset = async (metadata: AssetMetadata, file: File): Promise<boolean> => {
     if (!(file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/') ||
       /\.(mp4|webm|mov|m4v|mkv|avi|mp3|wav|ogg|m4a|aac|flac|jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name))) {
       notify(`${file.name} is not a supported media file.`, true);
       return false;
     }
-    if (mediaImporting) {
+    if (mediaImporting || desktopCloseRequestedRef.current) {
       notify('Wait for the current media operation to finish before relinking.', true);
       return false;
     }
     const targetProjectId = projectRef.current.id;
-    setMediaImporting(true);
+    beginMediaImport();
     setSaveState('saving');
     try {
       const replacement: Asset = {
@@ -1545,7 +1640,7 @@ function Home() {
       notify(`Could not relink “${metadata.name}”. Check browser storage space and try again.`, true);
       return false;
     } finally {
-      setMediaImporting(false);
+      endMediaImport();
     }
   };
   const addAssetToTimeline = useCallback((asset: Asset, trackId?: string, at = playhead, asAudio = false) => {
@@ -2170,7 +2265,7 @@ function Home() {
       notify('Could not delete this folder. The projects were not intentionally removed.', true);
     }
   };
-  const flushCurrentProjectSave = async () => {
+  const flushCurrentProjectSave = useCallback(async () => {
     if (!hasActiveProject) return;
     if (saveTimer.current !== undefined) {
       window.clearTimeout(saveTimer.current);
@@ -2200,7 +2295,38 @@ function Home() {
         return;
       }
     }
-  };
+  }, [hasActiveProject, persistProjectSnapshot]);
+  useEffect(() => {
+    const desktop = window.cutlineDesktop;
+    if (!desktop) return;
+    const unsubscribeCloseRequested = desktop.onCloseRequested((requestId) => {
+      desktopCloseRequestedRef.current = true;
+      void (async () => {
+        let saved = false;
+        try {
+          while (mediaImportingRef.current) {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+          }
+          await flushCurrentProjectSave();
+          saved = true;
+        } catch {
+          notify('The latest project changes could not be saved before closing.', true);
+        }
+        try {
+          await desktop.completeCloseRequest(requestId, saved);
+        } catch {
+          notify('Cutline could not confirm the save with Windows. Keep the app open and try saving again.', true);
+        }
+      })();
+    });
+    const unsubscribeCloseCancelled = desktop.onCloseCancelled(() => {
+      desktopCloseRequestedRef.current = false;
+    });
+    return () => {
+      unsubscribeCloseRequested();
+      unsubscribeCloseCancelled();
+    };
+  }, [flushCurrentProjectSave, notify]);
   const saveNow = async () => {
     try {
       if (hasActiveProject) await flushCurrentProjectSave();
@@ -2238,6 +2364,7 @@ function Home() {
       persistedSnapshot.current = { project: latestRecord.project, assets: localAssets, selection };
       setSelectedClipId(selection.clipId); setSelectedAssetId(selection.assetId); setPlayhead(0);
       setHasActiveProject(true); setSaveState('saved'); setDialog(null);
+      rememberActiveProject(latestRecord.project.id);
       notify(`Opened “${latestRecord.project.name}” from local storage.`);
       return true;
     } catch {
@@ -2289,6 +2416,7 @@ function Home() {
     setProject(nextProject); setAssets([]); setSelectedClipId(null); setSelectedAssetId(null); setPlayhead(0);
     persistedSnapshot.current = { project: nextProject, assets: [], selection: initialSelection };
     setHasActiveProject(true); setSaveState('saved'); setDialog(null);
+    rememberActiveProject(nextProject.id);
     return true;
   };
   const beginNewProject = () => {
@@ -2383,6 +2511,7 @@ function Home() {
       setPlayhead(0);
       setDialog(null);
       if (revision === saveRevision.current) setSaveState('saved');
+      rememberActiveProject(duplicate.id);
       notify(`Saved “${name}” as an independent project.`);
     } catch {
       try { await deleteLocalProject(duplicate.id); } catch { /* keep the original project intact if cleanup fails */ }
@@ -2594,6 +2723,7 @@ function Home() {
     if (!window.confirm(`Delete “${record.project.name}” and its Cutline-stored media copies from this browser? Original files on your computer will not be deleted.`)) return;
     try {
       await deleteLocalProject(record.project.id);
+      clearRememberedProject(record.project.id);
       const remaining = await readLocalProjects();
       setSavedProjects(remaining);
       if (projectRef.current.id === record.project.id) {
@@ -3471,7 +3601,7 @@ function Home() {
           {(libraryWorkspace === 'media' || libraryWorkspace === 'audio' || libraryWorkspace === 'overlays') && <>
             <div className="asset-tools">
               <label className="search-box"><Search size={13} /><input aria-label={`Search ${libraryWorkspace}`} data-testid="input-search-media" placeholder="Find media…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-              <button className="icon-btn active" title="Import local media" onClick={() => fileInput.current?.click()} data-testid="button-import"><Plus size={17} /></button>
+              <button className="icon-btn active" title="Import local media" aria-label="Import local media" disabled={mediaImporting} onClick={() => void chooseMediaFiles()} data-testid="button-import"><Plus size={17} /></button>
               <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => { if (event.target.files) void importFiles(event.target.files); event.target.value = ''; }} data-testid="input-media-files" />
               <input
                 ref={relinkFileInput}

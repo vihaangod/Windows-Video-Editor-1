@@ -4,6 +4,57 @@ const path = require('node:path');
 const REMOVE_MEDIA_RESPONSE = 1;
 const MAX_MEDIA_NAME_LENGTH = 120;
 const MAX_CLIP_COUNT = 1_000_000;
+const MEDIA_CONTENT_TYPES = Object.freeze({
+  '.aac': 'audio/aac',
+  '.avif': 'image/avif',
+  '.avi': 'video/x-msvideo',
+  '.bmp': 'image/bmp',
+  '.flac': 'audio/flac',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.m4a': 'audio/mp4',
+  '.m4v': 'video/x-m4v',
+  '.mkv': 'video/x-matroska',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.ogg': 'audio/ogg',
+  '.png': 'image/png',
+  '.wav': 'audio/wav',
+  '.webm': 'video/webm',
+  '.webp': 'image/webp',
+});
+const SUPPORTED_MEDIA_EXTENSIONS = Object.freeze(Object.keys(MEDIA_CONTENT_TYPES).map((extension) => extension.slice(1)));
+
+function getMediaContentType(fileName) {
+  if (typeof fileName !== 'string') return null;
+  return MEDIA_CONTENT_TYPES[path.extname(fileName).toLowerCase()] || null;
+}
+
+function createNativeMediaDescriptor(filePath, token) {
+  if (typeof filePath !== 'string' || typeof token !== 'string' || !/^[a-f0-9-]{36}$/i.test(token)) {
+    return null;
+  }
+
+  try {
+    const absolutePath = path.resolve(filePath);
+    const fileName = path.basename(absolutePath).replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+    const mimeType = getMediaContentType(fileName);
+    const stats = fs.statSync(absolutePath);
+    if (!fileName || !mimeType || !stats.isFile() || !Number.isSafeInteger(stats.size)) return null;
+
+    return {
+      token,
+      filePath: absolutePath,
+      fileName: fileName.slice(0, 255),
+      mimeType,
+      byteSize: stats.size,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function normalizeMediaRemovalRequest(payload) {
   if (!payload || typeof payload !== 'object') return null;
@@ -71,8 +122,11 @@ function resolveRendererFile(rendererRoot, requestUrl) {
 }
 
 module.exports = {
+  createNativeMediaDescriptor,
   createMediaRemovalDialogOptions,
   confirmMediaRemoval,
+  getMediaContentType,
   normalizeMediaRemovalRequest,
   resolveRendererFile,
+  SUPPORTED_MEDIA_EXTENSIONS,
 };

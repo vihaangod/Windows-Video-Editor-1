@@ -5,11 +5,38 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  createNativeMediaDescriptor,
   confirmMediaRemoval,
   createMediaRemovalDialogOptions,
+  getMediaContentType,
   normalizeMediaRemovalRequest,
   resolveRendererFile,
+  SUPPORTED_MEDIA_EXTENSIONS,
 } = require('./security-utils.cjs');
+
+test('native media descriptors expose safe metadata without changing the selected source file', (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cutline-electron-media-'));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const mediaPath = path.join(root, 'source.MP4');
+  fs.writeFileSync(mediaPath, Buffer.from('video data'));
+
+  const descriptor = createNativeMediaDescriptor(mediaPath, '12345678-1234-4234-8234-123456789abc');
+  assert.deepEqual({
+    name: descriptor.fileName,
+    mimeType: descriptor.mimeType,
+    byteSize: descriptor.byteSize,
+  }, {
+    name: 'source.MP4',
+    mimeType: 'video/mp4',
+    byteSize: 10,
+  });
+  assert.equal(fs.readFileSync(mediaPath, 'utf8'), 'video data');
+  assert.equal(getMediaContentType('still.AVIF'), 'image/avif');
+  assert.ok(SUPPORTED_MEDIA_EXTENSIONS.includes('mkv'));
+  assert.equal(createNativeMediaDescriptor(mediaPath, 'invalid-token'), null);
+  assert.equal(createNativeMediaDescriptor(path.join(root, 'missing.mp4'), '12345678-1234-4234-8234-123456789abc'), null);
+  assert.equal(createNativeMediaDescriptor(root, '12345678-1234-4234-8234-123456789abc'), null);
+});
 
 test('media-removal confirmation defaults to Cancel and explains project-only changes', () => {
   const options = createMediaRemovalDialogOptions({ fileName: 'clip.mp4', clipCount: 2 });
