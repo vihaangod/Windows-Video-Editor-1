@@ -692,7 +692,6 @@ function Home() {
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [previewZoom, setPreviewZoom] = useState<'fit' | '100' | 'canvas'>('fit');
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<'project' | 'export' | null>(null);
@@ -968,16 +967,14 @@ function Home() {
     if (!wrap) return;
     const updateFrameSize = () => {
       const ratio = project.width / Math.max(1, project.height);
-      const width = previewZoom === '100'
-        ? Math.max(0, project.width)
-        : Math.max(0, Math.min(wrap.clientWidth * (previewZoom === 'canvas' ? .99 : .94), previewZoom === 'canvas' ? project.width : 1320, (wrap.clientHeight - 30) * ratio));
+      const width = Math.max(0, Math.min(wrap.clientWidth * .94, 1320, (wrap.clientHeight - 30) * ratio));
       setPreviewFrameSize({ width, height: width / ratio });
     };
     const observer = new ResizeObserver(updateFrameSize);
     observer.observe(wrap);
     updateFrameSize();
     return () => observer.disconnect();
-  }, [project.width, project.height, previewZoom]);
+  }, [project.width, project.height]);
 
   const contentEnd = useMemo(() => Math.max(
     0,
@@ -3309,17 +3306,11 @@ function Home() {
               onValueChange={(value) => commit((current) => ({ ...current, frameRate: Number(value) }))}
               data-testid="select-frame-rate"
             />
-            <span className="divider" />
-            <div className="preview-zoom-tools" role="group" aria-label="Preview zoom">
-              <button type="button" className={previewZoom === 'fit' ? 'active' : ''} aria-pressed={previewZoom === 'fit'} onClick={() => setPreviewZoom('fit')} data-testid="button-preview-fit">Fit</button>
-              <button type="button" className={previewZoom === 'canvas' ? 'active' : ''} aria-pressed={previewZoom === 'canvas'} onClick={() => setPreviewZoom('canvas')} data-testid="button-preview-canvas">Fit Canvas</button>
-              <button type="button" className={previewZoom === '100' ? 'active' : ''} aria-pressed={previewZoom === '100'} onClick={() => setPreviewZoom('100')} data-testid="button-preview-100">100%</button>
-            </div>
           </div>
-          <div className={`preview-wrap ${previewZoom === '100' ? 'is-native-zoom' : ''}`} ref={previewWrapRef}>
+          <div className="preview-wrap" ref={previewWrapRef}>
             <div className="preview-frame" style={previewFrameSize.width
               ? { width: `${previewFrameSize.width}px`, height: `${previewFrameSize.height}px`, aspectRatio: `${project.width} / ${project.height}` }
-              : { width: previewZoom === '100' ? `${project.width}px` : `min(${previewZoom === 'canvas' ? '99%' : '94%'}, ${previewZoom === 'canvas' ? project.width : 1320}px)`, aspectRatio: `${project.width} / ${project.height}` }}>
+              : { width: 'min(94%, 1320px)', aspectRatio: `${project.width} / ${project.height}` }}>
               <canvas
                 ref={previewCanvasRef}
                 className="preview-canvas preview-canvas--video"
