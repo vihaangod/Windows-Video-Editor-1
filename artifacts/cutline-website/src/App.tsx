@@ -1,6 +1,5 @@
 import { ArrowDown, ArrowRight, AudioLines, Check, Cloud, Download, Film, HardDrive, Layers3, LockKeyhole, Monitor, MousePointer2, Play, Sparkles, Type, WandSparkles, Waves } from 'lucide-react';
 import cutlineLogo from '../../cutline-editor/src/assets/cutline-app-icon.svg';
-import { TeamSection } from './components/TeamSection';
 
 const CUTLINE_DOWNLOAD_URL =
   import.meta.env.VITE_CUTLINE_DOWNLOAD_URL ||
@@ -37,7 +36,6 @@ function App() {
             <a className="focus-ring" href="#editor">The editor</a>
             <a className="focus-ring" href="#local-first">Local by design</a>
             <a className="focus-ring" href="#requirements">Requirements</a>
-            <a className="focus-ring" href="#team">The team</a>
           </nav>
           <a href="#download" className="nav-download focus-ring">Get Cutline <ArrowDown size={14} /></a>
         </div>
@@ -111,12 +109,10 @@ function App() {
           </div>
         </section>
 
-        <TeamSection />
-
         <section className="download-section" id="download">
           <div className="download-inner">
             <div className="download-copy">
-              <div className="section-label mono"><span>05</span> / READY WHEN YOU ARE</div>
+              <div className="section-label mono"><span>04</span> / READY WHEN YOU ARE</div>
               <h2>Make something<br /><em>worth keeping.</em></h2>
               <p>Cutline 1.0.0 is built for Windows x64. Give it a home on your PC and bring the footage you want to work with.</p>
               <DownloadLink className="download-large" />
@@ -135,7 +131,7 @@ function App() {
         </section>
 
         <section className="faq-section section-wrap">
-          <div className="section-label mono"><span>06</span> / A FEW GOOD QUESTIONS</div>
+          <div className="section-label mono"><span>05</span> / A FEW GOOD QUESTIONS</div>
           <div className="faq-layout">
             <h2>Good to<br /><em>know.</em></h2>
             <div className="faq-list">
