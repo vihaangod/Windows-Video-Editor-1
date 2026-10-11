@@ -189,6 +189,43 @@ async function run() {
     assert.equal(geometry.sectionNamed, true, 'The team section needs a programmatic heading label.');
     assert.equal(geometry.imagesHaveAlt, true, 'Discord avatars need descriptive alternative text.');
 
+    const loopBoundary = await evaluate(`(async () => {
+      const track = document.querySelector('.team-track');
+      const animation = track.getAnimations().find(item => item.animationName === 'team-marquee-scroll');
+      const original = document.querySelector('.team-card-set:not(.team-card-set-copy) .team-card');
+      const copy = document.querySelector('.team-card-set-copy .team-card');
+      if (!animation) throw new Error('The CSS marquee animation was not found.');
+      animation.pause();
+      animation.effect.updateTiming({ duration: 60000 });
+      animation.currentTime = 59990;
+      const x = element => element.getBoundingClientRect().x;
+      const before = { time: animation.currentTime, originalX: x(original), copyX: x(copy) };
+      const boundary = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('The marquee did not emit an iteration boundary.')), 1500);
+        track.addEventListener('animationiteration', event => {
+          clearTimeout(timeout);
+          resolve({
+            elapsedTime: event.elapsedTime,
+            time: animation.currentTime,
+            originalX: x(original),
+            copyX: x(copy),
+          });
+        }, { once: true });
+      });
+      animation.play();
+      const after = await boundary;
+      animation.pause();
+      animation.effect.updateTiming({ duration: 54000 });
+      animation.currentTime = 0;
+      animation.play();
+      return { before, after };
+    })()`);
+    assert.ok(loopBoundary.after.time >= 60000, 'The loop test must cross one full CSS animation iteration.');
+    assert.ok(
+      Math.abs(loopBoundary.before.copyX - loopBoundary.after.originalX) < 3,
+      `The repeated first member must occupy the same position across the loop boundary: ${JSON.stringify(loopBoundary)}`,
+    );
+
     await devtools.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
       x: geometry.card.x,
@@ -357,6 +394,7 @@ async function run() {
         pageData: pageData.remoteUsernames,
         cards: geometry.originalNames.length,
         seamlessLoopGeometry: true,
+        seamlessLoopBoundary: true,
         hoverPauseAndPositionPreserved: true,
         keyboardPauseAndPositionPreserved: true,
         mobileNoOverflow: true,
