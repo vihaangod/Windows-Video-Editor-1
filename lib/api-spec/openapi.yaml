@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: team
+    description: Public Cutline team profiles
 paths:
   /healthz:
     get:
@@ -24,6 +26,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /team:
+    get:
+      operationId: getTeamProfiles
+      tags: [team]
+      summary: Get Cutline team profiles
+      description: Returns the static team roster and public Discord profile details when available.
+      responses:
+        "200":
+          description: Team roster, including safe fallbacks when Discord profiles cannot be fetched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamProfilesResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +48,40 @@ components:
           type: string
       required:
         - status
+    TeamMember:
+      type: object
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        username:
+          type: ["string", "null"]
+        avatarUrl:
+          type: ["string", "null"]
+        profileAvailable:
+          type: boolean
+      required:
+        - slug
+        - name
+        - role
+        - username
+        - avatarUrl
+        - profileAvailable
+    TeamProfilesResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [live, partial, offline]
+          description: Discord profile availability; the team names and roles are always included.
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamMember"
+      required:
+        - status
+        - members
 
