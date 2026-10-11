@@ -7,7 +7,7 @@ import {
 
 const fallbackMembers: TeamMember[] = [
   { slug: "vihaan", name: "Vihaan", role: "Founder", displayName: null, username: null, avatarUrl: null, profileAvailable: false },
-  { slug: "neyo", name: "Neyo", role: "Team Member", displayName: null, username: null, avatarUrl: null, profileAvailable: false },
+  { slug: "neyo", name: "Neyo", role: "Duniya ka papa", displayName: null, username: null, avatarUrl: null, profileAvailable: false },
   { slug: "arshit", name: "Arshit", role: "English Yapper", displayName: null, username: null, avatarUrl: null, profileAvailable: false },
   { slug: "revu", name: "Revu", role: "Certified Chaos Agent", displayName: null, username: null, avatarUrl: null, profileAvailable: false },
   { slug: "parth", name: "Parth", role: "Broken-Heart Specialist", displayName: null, username: null, avatarUrl: null, profileAvailable: false },

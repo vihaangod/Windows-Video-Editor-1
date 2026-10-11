@@ -1,0 +1,63 @@
+Continue from your current progress. Do not restart the project or repeat completed work unnecessarily.
+
+## 1. Finish the Cutline Website Team Section
+
+Implement the responsive, dark-and-gold **Meet the Team** section in `/cutline-website/` with exactly these 7 members:
+
+1. Vihaan — Founder — Discord ID: `1217138532053815319`
+2. Neyo — Team Member — Discord ID: `936511340288299058`
+3. Arshit — English Yapper — Discord ID: `1371818278455869510`
+4. Revu — Certified Chaos Agent — Discord ID: `1323921871787393088`
+5. Parth — Broken-Heart Specialist — no Discord ID provided
+6. Cisko — Final Lobby Boss — Discord ID: `799986687475580999`
+7. Jatin — Certified Cooking Minister — Discord ID: `1316754985807122526`
+
+Requirements:
+- Use circular Discord profile pictures when they can be obtained through authorized access.
+- Do not invent usernames, avatars, or profile details. Provide graceful fallback avatars.
+- Keep `DISCORD_BOT_TOKEN` and `SESSION_SECRET` server-side. Never expose secret values in frontend code, logs, or responses.
+- Create a smooth, continuous right-to-left marquee with no visible gaps or jumps.
+- Hovering or keyboard-focusing a member must pause the entire marquee and resume at the exact same position.
+- Make it responsive on mobile and desktop, keyboard-accessible, and compatible with reduced-motion preferences.
+- Hide duplicated marquee items from screen readers.
+- Match the existing site's design system and avoid unrelated redesigns.
+
+## 2. Verify the Implementation
+
+Inspect the existing code and fix actual issues before declaring the task complete.
+
+Run the applicable website checks:
+- TypeScript/typecheck
+- Lint, if configured
+- Production build
+- Relevant automated tests
+- Team marquee interaction and accessibility checks
+- Responsive layout checks
+
+Also rerun the editor's relevant audio-export and transition tests if the existing test setup supports them. Do not change unrelated editor functionality just to make tests pass.
+
+For every test, report the actual command and its real result. Do not claim a browser interaction, Discord profile lookup, export, or Windows build was tested unless it actually was.
+
+## 3. Clearly Report Limitations
+
+Keep these separate from passing tests:
+- Windows MP4 export: pending unless tested on Windows.
+- Windows installer and packaged executable: pending unless actually built and verified.
+- Live Discord Rich Presence/client integration: pending unless tested with the Windows Discord client.
+- Any Discord profile that cannot be accessed: use the fallback and state the limitation.
+
+## 4. Strict Project Safety
+
+**Do not publish, deploy, release, or make the project publicly available.** Do not press Publish or deploy buttons. Do not expose or rotate secrets. Do not delete existing project data. Make the smallest necessary code changes and preserve existing work.
+
+## 5. Final Report
+
+When finished, provide:
+1. Files created or modified.
+2. Features completed.
+3. Tests run, with exact commands and pass/fail results.
+4. Any failures and fixes made.
+5. Anything still unverified or requiring Windows testing.
+6. Confirmation that nothing was published or deployed.
+
+Continue working until the implementation and all feasible checks are complete. If blocked, explain the exact blocker and what remains, rather than stopping after inspection or claiming completion prematurely.

@@ -125,14 +125,21 @@ async function run() {
         const section = document.querySelector('#team');
         const originals = document.querySelectorAll('.team-card-set:not(.team-card-set-copy) .team-card');
         const remoteUsernames = [...originals].filter(card => card.querySelector('.team-username')?.textContent?.startsWith('@')).length;
-        return document.readyState === 'complete' && section && originals.length === 7 && remoteUsernames >= 5
-          ? { remoteUsernames, title: document.title }
+        return document.readyState === 'complete' && section && originals.length === 7
+          ? {
+              remoteUsernames,
+              title: document.title,
+              neyoRole: [...originals].find(card => card.querySelector('h3')?.textContent?.trim() === 'Neyo')
+                ?.querySelector('.team-role')?.textContent?.trim(),
+              profileMessage: section.querySelector('.team-profile-status')?.textContent?.trim(),
+            }
           : null;
       })()`);
       if (pageData) break;
       await delay(250);
     }
     assert.ok(pageData, 'Expected seven team profiles, with Discord usernames rendered by the API.');
+    assert.equal(pageData.neyoRole, 'Duniya ka papa', 'Neyo must display the requested team role.');
 
     await devtools.send('Emulation.setDeviceMetricsOverride', {
       width: 1440,
@@ -189,43 +196,6 @@ async function run() {
     assert.equal(geometry.sectionNamed, true, 'The team section needs a programmatic heading label.');
     assert.equal(geometry.imagesHaveAlt, true, 'Discord avatars need descriptive alternative text.');
 
-    const loopBoundary = await evaluate(`(async () => {
-      const track = document.querySelector('.team-track');
-      const animation = track.getAnimations().find(item => item.animationName === 'team-marquee-scroll');
-      const original = document.querySelector('.team-card-set:not(.team-card-set-copy) .team-card');
-      const copy = document.querySelector('.team-card-set-copy .team-card');
-      if (!animation) throw new Error('The CSS marquee animation was not found.');
-      animation.pause();
-      animation.effect.updateTiming({ duration: 60000 });
-      animation.currentTime = 59990;
-      const x = element => element.getBoundingClientRect().x;
-      const before = { time: animation.currentTime, originalX: x(original), copyX: x(copy) };
-      const boundary = new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('The marquee did not emit an iteration boundary.')), 1500);
-        track.addEventListener('animationiteration', event => {
-          clearTimeout(timeout);
-          resolve({
-            elapsedTime: event.elapsedTime,
-            time: animation.currentTime,
-            originalX: x(original),
-            copyX: x(copy),
-          });
-        }, { once: true });
-      });
-      animation.play();
-      const after = await boundary;
-      animation.pause();
-      animation.effect.updateTiming({ duration: 54000 });
-      animation.currentTime = 0;
-      animation.play();
-      return { before, after };
-    })()`);
-    assert.ok(loopBoundary.after.time >= 60000, 'The loop test must cross one full CSS animation iteration.');
-    assert.ok(
-      Math.abs(loopBoundary.before.copyX - loopBoundary.after.originalX) < 3,
-      `The repeated first member must occupy the same position across the loop boundary: ${JSON.stringify(loopBoundary)}`,
-    );
-
     await devtools.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
       x: geometry.card.x,
@@ -246,6 +216,7 @@ async function run() {
       };
     })()`);
     assert.equal(hoverPausedAt.state, 'paused', `Hovering a team card must pause the entire track: ${JSON.stringify({ hoverPausedAt, card: geometry.card })}`);
+    assert.equal(hoverPausedAt.cssState, 'paused', `Hovering a team card must pause the entire track: ${JSON.stringify({ hoverPausedAt, card: geometry.card })}`);
     await delay(220);
     const hoverStillPaused = await evaluate(`(() => {
       const track = document.querySelector('.team-track');
@@ -283,6 +254,7 @@ async function run() {
     assert.ok(hoverAdvanced > hoverResumedAt.time + 100, 'The marquee must continue moving after hover ends.');
 
     await evaluate(`document.querySelector('.team-card-set:not(.team-card-set-copy) .team-card').focus({preventScroll:true})`);
+    await delay(60);
     const focusPausedAt = await evaluate(`(() => {
       const track = document.querySelector('.team-track');
       const region = document.querySelector('.team-marquee');
@@ -295,6 +267,7 @@ async function run() {
       };
     })()`);
     assert.equal(focusPausedAt.state, 'paused', `Keyboard focus on a member card must pause the entire marquee: ${JSON.stringify(focusPausedAt)}`);
+    assert.equal(focusPausedAt.cssState, 'paused', `Keyboard focus on a member card must pause the entire marquee: ${JSON.stringify(focusPausedAt)}`);
     await delay(180);
     const focusStillPaused = await evaluate(`(() => {
       const track = document.querySelector('.team-track');
@@ -314,13 +287,25 @@ async function run() {
     const focusResume = await evaluate(`(() => {
       const track = document.querySelector('.team-track');
       const animation = track.getAnimations()[0];
-      const paused = { state: animation?.playState, time: animation?.currentTime, transform: getComputedStyle(track).transform };
+      const paused = {
+        state: animation?.playState,
+        cssState: getComputedStyle(track).animationPlayState,
+        time: animation?.currentTime,
+        transform: getComputedStyle(track).transform,
+      };
       document.activeElement.blur();
-      const resumed = { state: animation?.playState, time: animation?.currentTime, transform: getComputedStyle(track).transform };
+      const resumed = {
+        state: animation?.playState,
+        cssState: getComputedStyle(track).animationPlayState,
+        time: animation?.currentTime,
+        transform: getComputedStyle(track).transform,
+      };
       return { paused, resumed };
     })()`);
     assert.equal(focusResume.paused.state, 'paused', 'The focused member must be paused immediately before blur.');
+    assert.equal(focusResume.paused.cssState, 'paused', 'The focused member must be paused immediately before blur.');
     assert.equal(focusResume.resumed.state, 'running', 'Leaving the focused member must resume the marquee.');
+    assert.equal(focusResume.resumed.cssState, 'running', 'Leaving the focused member must resume the marquee.');
     assert.ok(Math.abs(focusResume.resumed.time - focusResume.paused.time) < 1, 'Keyboard resume must continue from the exact paused animation time.');
     assert.equal(focusResume.resumed.transform, focusResume.paused.transform, 'Keyboard resume must not jump to a different visual position.');
 
@@ -388,10 +373,49 @@ async function run() {
         fallbacks: document.querySelectorAll('.team-card-set:not(.team-card-set-copy) .team-avatar-fallback').length,
       };
     })()`);
+    await devtools.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await delay(100);
+    const loopBoundary = await evaluate(`(async () => {
+      const track = document.querySelector('.team-track');
+      const animation = track.getAnimations().find(item => item.animationName === 'team-marquee-scroll');
+      const original = document.querySelector('.team-card-set:not(.team-card-set-copy) .team-card');
+      const copy = document.querySelector('.team-card-set-copy .team-card');
+      if (!animation) throw new Error('The CSS marquee animation was not found.');
+      animation.pause();
+      animation.effect.updateTiming({ duration: 60000 });
+      animation.currentTime = 59990;
+      const x = element => element.getBoundingClientRect().x;
+      const before = { time: animation.currentTime, originalX: x(original), copyX: x(copy) };
+      const boundary = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('The marquee did not emit an iteration boundary.')), 1500);
+        track.addEventListener('animationiteration', event => {
+          clearTimeout(timeout);
+          resolve({
+            elapsedTime: event.elapsedTime,
+            time: animation.currentTime,
+            originalX: x(original),
+            copyX: x(copy),
+          });
+        }, { once: true });
+      });
+      animation.play();
+      const after = await boundary;
+      animation.pause();
+      return { before, after };
+    })()`);
+    assert.ok(loopBoundary.after.time >= 60000, 'The loop test must cross one full CSS animation iteration.');
+    assert.ok(
+      Math.abs(loopBoundary.before.copyX - loopBoundary.after.originalX) < 3,
+      `The repeated first member must occupy the same position across the loop boundary: ${JSON.stringify(loopBoundary)}`,
+    );
+
     process.stdout.write(`${JSON.stringify({
       result: 'pass',
       checks: {
-        pageData: pageData.remoteUsernames,
+        discordProfilesAvailable: pageData.remoteUsernames,
+        discordProfileStatus: pageData.profileMessage,
         cards: geometry.originalNames.length,
         seamlessLoopGeometry: true,
         seamlessLoopBoundary: true,
@@ -416,6 +440,6 @@ async function run() {
 }
 
 run().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
   process.exitCode = 1;
 });

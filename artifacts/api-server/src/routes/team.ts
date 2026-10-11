@@ -18,7 +18,7 @@ const roster = [
   {
     slug: "neyo",
     name: "Neyo",
-    role: "Team Member",
+    role: "Duniya ka papa",
     discordId: "936511340288299058",
   },
   {
