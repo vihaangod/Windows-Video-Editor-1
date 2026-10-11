@@ -16,8 +16,11 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:timeline": "node --experimental-strip-types --test src/lib/timeline-geometry.test.ts src/lib/export-utils.test.ts src/lib/project-library-utils.test.ts",
+    "test:audio": "node --experimental-strip-types --test src/lib/audio-export.test.ts",
+    "test:audio:browser": "node tests/run-audio-export.cjs",
     "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts",
     "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts src/lib/transition-utils.test.ts",
+    "test:transitions:browser": "node tests/run-transition-pixels.cjs",
     "test:cloud": "node --experimental-strip-types --test src/lib/cloud-projects.test.ts",
     "test:desktop": "node --test desktop/security-utils.test.cjs desktop/rich-presence.test.cjs"
   },

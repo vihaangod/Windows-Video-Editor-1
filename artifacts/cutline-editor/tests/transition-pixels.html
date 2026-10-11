@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en" data-result="running">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cutline transition pixel checks</title>
+  </head>
+  <body>
+    <pre id="result">Running browser pixel checks…</pre>
+    <script type="module">
+      import { renderProjectFrame } from '../src/lib/composition.ts';
+
+      const width = 320;
+      const height = 180;
+      const types = [
+        'fade', 'cross-dissolve', 'fade-through-black', 'wipe', 'slide', 'zoom', 'zoom-in', 'zoom-out',
+        'split-horizontal', 'split-vertical', 'doors', 'blinds', 'iris', 'circle', 'diamond',
+        'blur-dissolve', 'push', 'curtain', 'flash', 'diagonal',
+      ];
+
+      function makeImage(draw) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        draw(canvas.getContext('2d'));
+        const image = new Image();
+        image.src = canvas.toDataURL();
+        return image;
+      }
+
+      function ready(image) {
+        return image.complete && image.naturalWidth > 0
+          ? Promise.resolve()
+          : new Promise((resolve, reject) => {
+              image.onload = resolve;
+              image.onerror = () => reject(new Error('Transition fixture image failed to load'));
+            });
+      }
+
+      function signature(context) {
+        const pixels = context.getImageData(0, 0, width, height).data;
+        let hash = 2166136261;
+        for (const value of pixels) {
+          hash ^= value;
+          hash = Math.imul(hash, 16777619);
+        }
+        return (hash >>> 0).toString(16);
+      }
+
+      function render(type, playing) {
+        const project = {
+          id: 'browser-transition-pixel-check',
+          name: 'Browser pixel check',
+          width,
+          height,
+          frameRate: 30,
+          tracks: [{ id: 'video', name: 'Video', kind: 'video', order: 0, muted: false, visible: true }],
+          clips: [
+            { id: 'from', assetId: 'asset-from', trackId: 'video', timelineStart: 0, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+            { id: 'to', assetId: 'asset-to', trackId: 'video', timelineStart: 2, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+          ],
+          transitions: [{
+            id: 'transition',
+            fromClipId: 'from',
+            toClipId: 'to',
+            type,
+            duration: 1,
+            mode: 'between',
+            direction: 'right',
+          }],
+        };
+        const assets = ['asset-from', 'asset-to'].map((id) => ({
+          id,
+          name: `${id}.png`,
+          mimeType: 'image/png',
+          byteSize: 1,
+          width,
+          height,
+          blob: new Blob(),
+        }));
+        const media = new Map([['asset-from', fromImage], ['asset-to', toImage]]);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        renderProjectFrame(context, project, assets, media, 1.87, playing);
+        return { context, signature: signature(context) };
+      }
+
+      const fromImage = makeImage((context) => {
+        const gradient = context.createLinearGradient(0, 0, width, 0);
+        gradient.addColorStop(0, '#ff1b43');
+        gradient.addColorStop(1, '#7c1231');
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, width, height);
+        context.fillStyle = '#ffe3aa';
+        context.fillRect(80, 40, 52, 100);
+      });
+      const toImage = makeImage((context) => {
+        const gradient = context.createLinearGradient(width, 0, 0, height);
+        gradient.addColorStop(0, '#1b52ff');
+        gradient.addColorStop(1, '#18d7b2');
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, width, height);
+        context.fillStyle = '#f7a21b';
+        context.beginPath();
+        context.arc(235, 90, 40, 0, Math.PI * 2);
+        context.fill();
+      });
+
+      try {
+        await Promise.all([ready(fromImage), ready(toImage)]);
+        const signatures = new Map();
+        const parityFailures = [];
+        for (const type of types) {
+          const preview = render(type, true);
+          const exported = render(type, false);
+          signatures.set(type, preview.signature);
+          if (preview.signature !== exported.signature) parityFailures.push(type);
+        }
+        const duplicateSignatures = [...signatures.entries()].reduce((duplicates, [type, hash]) => {
+          const previous = [...signatures.entries()].find(([otherType, otherHash]) => otherType !== type && otherHash === hash);
+          if (previous) duplicates.add([previous[0], type].sort().join(' / '));
+          return duplicates;
+        }, new Set());
+        const slidePushDistinct = signatures.get('slide') !== signatures.get('push');
+        const passed = duplicateSignatures.size === 0 && parityFailures.length === 0 && slidePushDistinct;
+        const result = {
+          passed,
+          transitionCount: types.length,
+          uniquePixelFrames: new Set(signatures.values()).size,
+          duplicatePixelFrames: [...duplicateSignatures],
+          previewExportMismatches: parityFailures,
+          slidePushDistinct,
+        };
+        document.documentElement.dataset.result = passed ? 'pass' : 'fail';
+        document.querySelector('#result').textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        document.documentElement.dataset.result = 'fail';
+        document.querySelector('#result').textContent = error instanceof Error ? error.stack : String(error);
+      }
+    </script>
+  </body>
+</html>

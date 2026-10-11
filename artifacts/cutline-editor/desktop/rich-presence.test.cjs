@@ -102,6 +102,20 @@ test('activity describes editing, exporting and media library states with an acc
   assert.equal(buildRichPresenceActivity({ ...editing, workflow: 'media-library' }, startedAt).details, 'Browsing the media library');
 });
 
+test('Discord asset names are omitted by default and included only when a valid key is configured', () => {
+  const startedAt = 1_800_000_000_000;
+  const privateActivity = buildRichPresenceActivity(normalizeRichPresenceInput({
+    imageKey: 'cutline_icon',
+    projectName: 'Private project',
+  }), startedAt);
+  assert.equal(privateActivity.largeImageKey, 'cutline_icon');
+  assert.equal(privateActivity.state, undefined);
+
+  const defaultActivity = buildRichPresenceActivity(normalizeRichPresenceInput(null), startedAt);
+  assert.equal(defaultActivity.largeImageKey, undefined);
+  assert.equal(privateActivity.largeImageText, 'Cutline video editor');
+});
+
 test('disabled preference never connects; enabling and disabling controls publishing', async () => {
   const { controller, clients } = createHarness();
   assert.equal(controller.update({ enabled: false, clientId: CLIENT_ID }), 'disabled');
@@ -179,6 +193,31 @@ test('missing Discord app ID and connection failures are non-fatal and can be re
   const retry = scheduled;
   scheduled = null;
   retry();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(clients.length, 2);
+  assert.equal(controller.getStatus(), 'connected');
+  controller.shutdown();
+});
+
+test('an RPC disconnect stays non-fatal and reconnects after the configured delay', async () => {
+  let retry = null;
+  const { controller, clients, statuses } = createHarness({
+    schedule: (callback) => { retry = callback; return 1; },
+    cancelSchedule: () => { retry = null; },
+  });
+  controller.update({ enabled: true, clientId: CLIENT_ID });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.getStatus(), 'connected');
+
+  clients[0].emit('disconnected');
+  assert.equal(controller.getStatus(), 'unavailable');
+  assert.equal(clients[0].destroyCalls, 1);
+  assert.equal(typeof retry, 'function');
+  assert.ok(statuses.includes('unavailable'));
+
+  const reconnect = retry;
+  retry = null;
+  reconnect();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(clients.length, 2);
   assert.equal(controller.getStatus(), 'connected');

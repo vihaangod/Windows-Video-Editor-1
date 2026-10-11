@@ -1,0 +1,58 @@
+Continue working on Cutline. Do not publish, deploy, or release anything automatically.
+
+## Priority 1 — Fix audio export
+- Investigate why an 18.114-second edit produced 25.12 seconds of audio with gaps.
+- Fix the actual root cause in audio trimming, timeline offsets, clip boundaries, resampling, or rendering. Do not merely truncate audio.
+- Add regression tests for continuous audio, multiple clips, trimming, splitting, overlays, and non-zero timeline positions.
+- Verify exported audio duration, continuity, and audio/video synchronization.
+
+## Priority 2 — Fix all 20 transitions
+- Investigate why Slide and Push produced matching sampled frames.
+- Ensure all 20 transitions have distinct, correct implementations.
+- Add automated tests and browser-based pixel checks.
+- Verify preview and exported transition results match.
+
+## Priority 3 — Discord Rich Presence
+- Keep it disabled by default.
+- Verify Electron RPC integration, application/client ID, assets, activity updates, and enable/disable behavior.
+- Handle Discord being closed, unavailable, or not installed without crashing Cutline.
+- Share project names only with explicit opt-in; never expose local file paths or secrets.
+- Add tests for connection success/failure, disconnects, disabled settings, and activity updates.
+- Test with a live Discord client on Windows if possible. Otherwise, report live verification as incomplete.
+
+## Priority 4 — Website Team section
+Add a polished, responsive "Meet the Team" section matching Cutline's dark-and-gold branding. Display circular Discord profile pictures, names, usernames where available, and these roles:
+
+1. **Vihaan** — Discord ID: `1217138532053815319` — Founder
+2. **Neyo** — Discord ID: `936511340288299058` — Team Member
+3. **Arshit** — Discord ID: `1371818278455869510` — English Yapper
+4. **Revu** — Discord ID: `1323921871787393088` — Certified Chaos Agent
+5. **Parth** — Discord ID not provided — Broken-Heart Specialist
+6. **Cisko** — Discord ID: `799986687475580999` — Final Lobby Boss
+7. **Jatin** — Discord ID: `1316754985807122526` — Certified Cooking Minister
+
+- Use a supported, authorized Discord API/bot integration to retrieve and refresh avatars and profile information. Do not assume IDs alone permit public profile lookup.
+- Keep bot tokens and secrets server-side. Provide fallbacks if profiles cannot load.
+- Create a seamless, continuous **right-to-left scrolling marquee** for all team cards.
+- Pause the entire marquee when hovering over any profile picture, name, or card. Resume from the exact same position when the cursor leaves.
+- Support keyboard focus, reduced-motion preferences, responsive layouts, and touch devices.
+- Prevent visible gaps, jumps, or duplicate cards being announced to screen readers.
+- Preserve existing website functionality and Cutline branding.
+
+## Priority 5 — Export and Windows validation
+- Verify MP4 encoding on Windows using actual available media capabilities.
+- Preserve WebM export if it works correctly.
+- Show clear errors when a codec is unavailable.
+- Test actual exported files for duration, audio continuity, and synchronization.
+- Update `BUILDING-WINDOWS.md`.
+- Build and test the Windows installer on Windows if the environment permits.
+
+## Final verification
+1. Run typecheck, relevant automated tests, and the production build.
+2. Test real browser exports, overlays, audio, and transitions where possible.
+3. Report exact pass/fail results and separate verified, partially tested, and unverified features.
+4. Never claim Windows installer, live Discord, or MP4 testing passed unless actually performed.
+5. Fix regressions and preserve existing functionality.
+6. Do not publish, deploy, or create a public release automatically.
+
+Work in priority order: audio, transitions, Rich Presence, export validation, then website team integration. Do not sacrifice existing working features to rush implementation.

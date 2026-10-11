@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en" data-result="running">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cutline audio export browser check</title>
+  </head>
+  <body>
+    <pre id="result">Running encoded audio/video checks…</pre>
+    <script type="module">
+      import {
+        ALL_FORMATS,
+        AudioBufferSink,
+        AudioSample,
+        AudioSampleSource,
+        BlobSource,
+        BufferTarget,
+        canEncode,
+        CanvasSource,
+        Input,
+        Mp4OutputFormat,
+        Output,
+        Quality,
+        VideoSampleSink,
+        WebMOutputFormat,
+      } from 'mediabunny';
+      import { mixAudioTimelineChunk } from '../src/lib/audio-export.ts';
+
+      const resultNode = document.querySelector('#result');
+      const progress = (message) => { resultNode.textContent = message; };
+      const sampleRate = 48_000;
+      const duration = 18.114;
+      const frameRate = 30;
+      const frameCount = Math.ceil(duration * frameRate - 1e-7);
+      const audio = new Float32Array(Math.ceil(duration * sampleRate));
+      for (let frame = 0; frame < audio.length; frame += 1) {
+        audio[frame] = Math.sin((2 * Math.PI * 440 * frame) / sampleRate) * 0.25;
+      }
+      const fakeBuffer = {
+        timestamp: 0,
+        duration,
+        buffer: {
+          sampleRate,
+          numberOfChannels: 1,
+          length: audio.length,
+          getChannelData: () => audio,
+        },
+      };
+      const audioClip = {
+        id: 'continuous-tone',
+        trackId: 'audio',
+        timelineStart: 0,
+        sourceIn: 0,
+        sourceOut: duration,
+        volume: 1,
+        speed: 1,
+      };
+
+      async function encodeAndMeasure(format) {
+        const isMp4 = format === 'mp4';
+        const target = new BufferTarget();
+        const output = new Output({
+          format: isMp4 ? new Mp4OutputFormat({ fastStart: false }) : new WebMOutputFormat(),
+          target,
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 180;
+        const context = canvas.getContext('2d');
+        const videoSource = new CanvasSource(canvas, {
+          codec: isMp4 ? 'avc' : 'vp8',
+          quality: new Quality({ bitrate: 1_200_000 }),
+          hardwareAcceleration: 'no-preference',
+        });
+        const audioSource = new AudioSampleSource({
+          codec: isMp4 ? 'aac' : 'opus',
+          quality: new Quality({ bitrate: 128_000 }),
+        });
+        output.addVideoTrack(videoSource, { frameRate });
+        output.addAudioTrack(audioSource);
+
+        await output.start();
+        let nextAudioTimestamp = 0;
+        async function addAudioUntil(timelineTime) {
+          while (nextAudioTimestamp < Math.min(duration, timelineTime) - 1e-9) {
+            const chunkEnd = Math.min(duration, nextAudioTimestamp + 1);
+            const mixed = mixAudioTimelineChunk(nextAudioTimestamp, chunkEnd - nextAudioTimestamp, [
+              { clip: audioClip, buffers: [fakeBuffer] },
+            ], sampleRate);
+            const sample = new AudioSample({
+              format: 'f32-planar',
+              sampleRate: mixed.sampleRate,
+              numberOfFrames: mixed.numberOfFrames,
+              numberOfChannels: mixed.numberOfChannels,
+              timestamp: mixed.timestamp,
+              data: mixed.data,
+            });
+            try {
+              await audioSource.add(sample);
+            } finally {
+              sample.close();
+            }
+            nextAudioTimestamp = chunkEnd;
+          }
+        }
+
+        for (let frame = 0; frame < frameCount; frame += 1) {
+          const timestamp = frame / frameRate;
+          const frameDuration = Math.min(1 / frameRate, duration - timestamp);
+          context.fillStyle = `hsl(${(frame * 2) % 360} 65% 45%)`;
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.fillStyle = '#fff';
+          context.fillRect(frame % canvas.width, 80, 5, 20);
+          await addAudioUntil(timestamp);
+          await videoSource.add(timestamp, frameDuration);
+        }
+        await addAudioUntil(duration);
+        videoSource.close();
+        await audioSource.close();
+        await output.finalize();
+
+        if (!target.buffer) throw new Error(`${format.toUpperCase()} encoder returned no file data.`);
+        const input = new Input({
+          source: new BlobSource(new Blob([target.buffer], { type: isMp4 ? 'video/mp4' : 'video/webm' })),
+          formats: ALL_FORMATS,
+        });
+        try {
+          const audioTrack = await input.getPrimaryAudioTrack();
+          const videoTrack = await input.getPrimaryVideoTrack();
+          if (!audioTrack || !videoTrack) throw new Error(`${format.toUpperCase()} output is missing an audio or video track.`);
+          const [audioDuration, videoDuration] = await Promise.all([
+            audioTrack.computeDuration(),
+            videoTrack.computeDuration(),
+          ]);
+          const audioSink = new AudioBufferSink(audioTrack);
+          const decodedAudio = [];
+          for await (const part of audioSink.buffers(0, duration + 0.25)) decodedAudio.push(part);
+          if (!decodedAudio.length) throw new Error(`${format.toUpperCase()} audio decoded to no samples.`);
+
+          const decodedFrames = new VideoSampleSink(videoTrack);
+          let videoFrameCount = 0;
+          for await (const sample of decodedFrames.samples(0, duration + 0.25)) {
+            videoFrameCount += 1;
+            sample.close();
+          }
+          const decodedPcm = new Float32Array(Math.ceil((duration + 0.25) * sampleRate));
+          for (const part of decodedAudio) {
+            const offset = Math.round(part.timestamp * sampleRate);
+            const source = part.buffer.getChannelData(0);
+            const start = Math.max(0, offset);
+            const sourceStart = Math.max(0, -offset);
+            const copyLength = Math.min(source.length - sourceStart, decodedPcm.length - start);
+            if (copyLength > 0) decodedPcm.set(source.subarray(sourceStart, sourceStart + copyLength), start);
+          }
+
+          const windowFrames = sampleRate / 10;
+          let silentWindows = 0;
+          for (let start = sampleRate / 5; start + windowFrames < duration * sampleRate - sampleRate / 5; start += windowFrames) {
+            let sumSquares = 0;
+            for (let frame = start; frame < start + windowFrames; frame += 1) {
+              sumSquares += (decodedPcm[frame] || 0) ** 2;
+            }
+            const rms = Math.sqrt(sumSquares / windowFrames);
+            if (rms < 0.04) silentWindows += 1;
+          }
+          const decodedAudioEnd = Math.max(...decodedAudio.map((part) => part.timestamp + part.duration));
+          const audioDurationError = Math.abs(audioDuration - duration);
+          const syncError = Math.abs(audioDuration - videoDuration);
+          return {
+            format: format.toUpperCase(),
+            bytes: target.buffer.byteLength,
+            decodedFrames: videoFrameCount,
+            expectedFrames: frameCount,
+            audioDuration,
+            videoDuration,
+            decodedAudioEnd,
+            audioDurationError,
+            syncError,
+            silentWindows,
+            passed: videoFrameCount === frameCount
+              && audioDurationError < 0.06
+              && syncError < 0.06
+              && Math.abs(decodedAudioEnd - duration) < 0.08
+              && silentWindows === 0,
+          };
+        } finally {
+          input.dispose();
+        }
+      }
+
+      try {
+        progress('Checking browser codecs…');
+        const webmAvailable = await Promise.all([canEncode('vp8'), canEncode('opus')]);
+        if (!webmAvailable.every(Boolean)) throw new Error('This browser cannot encode the VP8/Opus WebM test profile.');
+        progress('Encoding an 18.114-second WebM test…');
+        const webm = await encodeAndMeasure('webm');
+        const mp4Available = await Promise.all([canEncode('avc'), canEncode('aac')]);
+        const mp4 = mp4Available.every(Boolean)
+          ? (progress('Encoding an 18.114-second MP4 test…'), await encodeAndMeasure('mp4'))
+          : { format: 'MP4', supported: false, reason: 'AVC or AAC is not supported by this browser.' };
+        const passed = webm.passed && (!mp4.supported || mp4.passed);
+        document.documentElement.dataset.result = passed ? 'pass' : 'fail';
+        resultNode.textContent = JSON.stringify({ passed, webm, mp4 }, null, 2);
+      } catch (error) {
+        document.documentElement.dataset.result = 'fail';
+        resultNode.textContent = error instanceof Error ? error.stack : String(error);
+      }
+    </script>
+  </body>
+</html>

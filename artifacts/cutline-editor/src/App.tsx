@@ -7,9 +7,10 @@ import {
   Trash2, Type, Undo2, UnlockKeyhole, Upload, UserRound, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
 import type {
+  AudioSample as AudioSampleType,
+  AudioSampleSource as AudioSampleSourceType,
   BufferTarget as BufferTargetType,
   CanvasSource,
-  MediaStreamAudioTrackSource,
   Output as OutputType,
   StreamTarget as StreamTargetType,
   StreamTargetChunk,
@@ -33,6 +34,7 @@ import {
   getUniqueExportBaseName,
   sanitizeExportBaseName,
 } from '@/lib/export-utils';
+import { mixAudioTimelineChunk, type AudioClipBuffers, type DecodedAudioBuffer } from '@/lib/audio-export';
 import { getProjectFolderNameError, getProjectNameError, MAX_PROJECT_FOLDERS } from '@/lib/project-library-utils';
 import { createSerializedWriteQueue, retryWrite } from '@/lib/save-queue';
 import { cloudMediaReferencesMatch, hashCloudEditorState, makeCloudEditorState, type CloudProjectLink } from '@/lib/cloud-projects';
@@ -3828,21 +3830,28 @@ function Home() {
     const videos = new Map<string, HTMLVideoElement>();
     const images = new Map<string, HTMLImageElement>();
     const mediaByAsset = new Map<string, HTMLImageElement | HTMLVideoElement>();
-    const audioJobs: Array<{ clip: Clip; media: HTMLAudioElement; gain: GainNode }> = [];
-    let audioContext: AudioContext | null = null;
-    let audioSource: MediaStreamAudioTrackSource | null = null;
-    let audioTrack: MediaStreamTrack | null = null;
+    const audioInputs = new Map<string, {
+      input: { dispose(): void };
+      sink: { buffers(startTimestamp?: number, endTimestamp?: number): AsyncIterable<DecodedAudioBuffer> };
+    } | null>();
+    const audioMixClips: Clip[] = [];
+    let audioSource: AudioSampleSourceType | null = null;
     let videoSource: CanvasSource | null = null;
     let output: OutputType | null = null;
     let exportCanvas: HTMLCanvasElement | null = null;
     let diskWriter: WritableFile | null = null;
     let outputCompleted = false;
-    let failureFromAudio: unknown = null;
+    let audioSourceClosed = false;
     try {
       const {
+        AudioBufferSink,
+        AudioSample,
+        AudioSampleSource,
+        ALL_FORMATS,
+        BlobSource,
         BufferTarget,
         CanvasSource,
-        MediaStreamAudioTrackSource,
+        Input,
         Mp4OutputFormat,
         Output,
         Quality,
@@ -3913,35 +3922,37 @@ function Home() {
           (track.kind === 'audio' || (isVideoTrackKind(track.kind) && !clip.audioOnly)));
       });
       if (clipsWithAudio.length) {
-        audioContext = new AudioContext();
-        const audioDestination = audioContext.createMediaStreamDestination();
-        for (const clip of project.clips) {
-          if (!clip.assetId) continue;
-          const asset = renderIndex.assetsById.get(clip.assetId);
-          const track = renderIndex.tracksById.get(clip.trackId);
-          const sourceHasAudio = Boolean(asset && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false)));
-          if (!asset || !track || clip.muted || track.muted || !sourceHasAudio ||
-            (track.kind !== 'audio' && (!isVideoTrackKind(track.kind) || clip.audioOnly))) continue;
-          const media = document.createElement('audio');
-          media.preload = 'metadata';
-          media.playbackRate = clip.speed;
-          media.src = URL.createObjectURL(asset.blob);
-          liveUrls.push(media.src);
-          const sourceNode = audioContext.createMediaElementSource(media);
-          const gain = audioContext.createGain();
-          gain.gain.value = clip.volume;
-          sourceNode.connect(gain);
-          gain.connect(audioDestination);
-          audioJobs.push({ clip, media, gain });
+        const audioAssetIds = new Set(clipsWithAudio.flatMap((clip) => clip.assetId ? [clip.assetId] : []));
+        for (const assetId of audioAssetIds) {
+          const asset = renderIndex.assetsById.get(assetId);
+          if (!asset) continue;
+          const input = new Input({ source: new BlobSource(asset.blob), formats: ALL_FORMATS });
+          try {
+            const audioTrack = await input.getPrimaryAudioTrack();
+            if (!audioTrack) {
+              input.dispose();
+              audioInputs.set(asset.id, null);
+              continue;
+            }
+            if (!(await audioTrack.canDecode())) {
+              throw new Error(`Audio in “${asset.name}” uses a codec this browser cannot decode for export.`);
+            }
+            audioInputs.set(asset.id, { input, sink: new AudioBufferSink(audioTrack) });
+          } catch (error) {
+            input.dispose();
+            throw error;
+          }
         }
-        audioTrack = audioDestination.stream.getAudioTracks()[0];
-        if (!audioTrack) throw new Error('The browser could not create an audio mix track.');
-        audioSource = new MediaStreamAudioTrackSource(audioTrack as ConstructorParameters<typeof MediaStreamAudioTrackSource>[0], {
-          codec: format === 'mp4' ? 'aac' : 'opus',
-          quality: new Quality({ bitrate: 128_000 }),
-        });
-        void audioSource.errorPromise.catch((error: unknown) => { failureFromAudio = error; });
-        output.addAudioTrack(audioSource);
+        for (const clip of clipsWithAudio) {
+          if (clip.assetId && audioInputs.get(clip.assetId)) audioMixClips.push(clip);
+        }
+        if (audioMixClips.length) {
+          audioSource = new AudioSampleSource({
+            codec: format === 'mp4' ? 'aac' : 'opus',
+            quality: new Quality({ bitrate: 128_000 }),
+          });
+          output.addAudioTrack(audioSource);
+        }
       }
 
       for (const asset of usedAssets) {
@@ -3973,13 +3984,50 @@ function Home() {
           mediaByAsset.set(asset.id, video);
         }
       }
-      await Promise.all(audioJobs.map(({ media, clip }) => new Promise<void>((resolve, reject) => {
-        if (media.readyState >= 1) { resolve(); return; }
-        const timeout = window.setTimeout(() => reject(new Error(`Timed out loading audio for clip ${clip.id}.`)), 15000);
-        media.onloadedmetadata = () => { window.clearTimeout(timeout); resolve(); };
-        media.onerror = () => { window.clearTimeout(timeout); reject(new Error(`Could not decode audio for clip ${clip.id}.`)); };
-      })));
-      if (audioContext) await audioContext.resume();
+      const audioSampleRate = 48_000;
+      const audioChunkDuration = 1;
+      let nextAudioTimestamp = 0;
+      const appendAudioUntil = async (timelineTime: number) => {
+        if (!audioSource) return;
+        while (nextAudioTimestamp < Math.min(end, timelineTime) - 1e-9) {
+          const chunkEnd = Math.min(end, nextAudioTimestamp + audioChunkDuration);
+          const chunkClips: AudioClipBuffers[] = [];
+          for (const clip of audioMixClips) {
+            if (!clip.assetId) continue;
+            const clipEnd = clip.timelineStart + getClipDuration(clip);
+            const activeStart = Math.max(nextAudioTimestamp, clip.timelineStart);
+            const activeEnd = Math.min(chunkEnd, clipEnd);
+            if (activeEnd <= activeStart) continue;
+            const sourceStart = clip.sourceIn + (activeStart - clip.timelineStart) * clip.speed;
+            const sourceEnd = clip.sourceIn + (activeEnd - clip.timelineStart) * clip.speed;
+            const entry = audioInputs.get(clip.assetId);
+            if (!entry) continue;
+            const buffers: DecodedAudioBuffer[] = [];
+            for await (const decoded of entry.sink.buffers(sourceStart, sourceEnd)) buffers.push(decoded);
+            chunkClips.push({ clip, buffers });
+          }
+          const mixed = mixAudioTimelineChunk(
+            nextAudioTimestamp,
+            chunkEnd - nextAudioTimestamp,
+            chunkClips,
+            audioSampleRate,
+          );
+          const sample: AudioSampleType = new AudioSample({
+            format: 'f32-planar',
+            sampleRate: mixed.sampleRate,
+            numberOfFrames: mixed.numberOfFrames,
+            numberOfChannels: mixed.numberOfChannels,
+            timestamp: mixed.timestamp,
+            data: mixed.data,
+          });
+          try {
+            await audioSource.add(sample);
+          } finally {
+            sample.close();
+          }
+          nextAudioTimestamp = chunkEnd;
+        }
+      };
       await output.start();
       const startedAt = performance.now();
       const frameDuration = 1 / project.frameRate;
@@ -4000,20 +4048,8 @@ function Home() {
             }
             const timestamp = nextFrameNumber * frameDuration;
             const t = Math.min(end, timestamp);
-            if (failureFromAudio) { reject(failureFromAudio); return; }
             renderProjectFrame(context, project, assets, mediaByAsset, t, true, undefined, undefined, renderIndex);
-            audioJobs.forEach(({ clip, media, gain }) => {
-              const active = t >= clip.timelineStart && t < clip.timelineStart + getClipDuration(clip);
-              if (active) {
-                const desired = clip.sourceIn + (t - clip.timelineStart) * clip.speed;
-                if (Math.abs(media.currentTime - desired) > .35) {
-                  try { media.currentTime = desired; } catch { /* media metadata may still be loading */ }
-                }
-                gain.gain.value = (clip.muted ? 0 : clip.volume) * getAudioFade(clip, t);
-                media.playbackRate = clip.speed;
-                if (media.paused) void media.play().catch((error: unknown) => { failureFromAudio = error; });
-              } else if (!media.paused) media.pause();
-            });
+            await appendAudioUntil(t);
             try {
               await videoSource!.add(timestamp, Math.min(frameDuration, Math.max(0, end - timestamp)));
             } catch (error) {
@@ -4030,10 +4066,12 @@ function Home() {
       });
 
       videos.forEach((video) => video.pause());
-      audioJobs.forEach(({ media }) => media.pause());
-      if (failureFromAudio) throw failureFromAudio;
+      await appendAudioUntil(end);
       videoSource.close();
-      audioSource?.close();
+      if (audioSource) {
+        await audioSource.close();
+        audioSourceClosed = true;
+      }
       await output.finalize();
       outputCompleted = true;
       setExportProgress(100);
@@ -4099,13 +4137,13 @@ function Home() {
       if (!outputCompleted && output && output.state !== 'canceled' && output.state !== 'finalized') {
         try { await output.cancel(); } catch { /* preserve the original encoder or storage error */ }
       }
-      audioJobs.forEach(({ media }) => { media.pause(); media.removeAttribute('src'); media.load(); });
       videos.forEach((video) => { video.pause(); video.removeAttribute('src'); video.load(); });
-      audioSource?.close();
+      if (audioSource && !audioSourceClosed) {
+        try { await audioSource.close(); } catch { /* preserve the original encoder or storage error */ }
+      }
       videoSource?.close();
-      audioTrack?.stop();
       liveUrls.forEach(URL.revokeObjectURL);
-      if (audioContext && audioContext.state !== 'closed') await audioContext.close();
+      audioInputs.forEach((entry) => entry?.input.dispose());
       if (diskWriter && !outputCompleted) {
         try { await diskWriter.abort(); } catch { /* writer may already be closed by Output */ }
       }
