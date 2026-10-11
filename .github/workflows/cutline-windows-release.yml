@@ -1,0 +1,213 @@
+name: Cutline Windows installer
+
+on:
+  push:
+    branches:
+      - windows-release/1.0.0
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out release branch
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install editor dependencies
+        run: pnpm install --frozen-lockfile --filter @workspace/cutline-editor...
+
+      - name: Validate Windows release inputs
+        shell: pwsh
+        run: |
+          $package = Get-Content 'artifacts/cutline-editor/package.json' -Raw | ConvertFrom-Json
+          if ($package.version -ne '1.0.0') {
+            throw "Expected Cutline version 1.0.0, found $($package.version)."
+          }
+          if (-not (Test-Path 'artifacts/cutline-editor/dist/public/index.html')) {
+            throw 'The prebuilt desktop renderer is missing.'
+          }
+          if (-not (Test-Path 'artifacts/cutline-editor/desktop-assets/cutline-app-icon.ico')) {
+            throw 'The custom Cutline .ico icon is missing.'
+          }
+
+      - name: Download the Windows Electron runtime
+        run: pnpm --filter @workspace/cutline-editor exec install-electron
+
+      - name: Build the x64 NSIS installer
+        run: pnpm --filter @workspace/cutline-editor exec electron-builder --win nsis --x64
+
+      - name: Install, launch, and uninstall the installer
+        shell: pwsh
+        run: |
+          $installer = Join-Path $PWD 'artifacts/cutline-editor/desktop-release/Cutline-1.0.0-Setup.exe'
+          if (-not (Test-Path $installer)) {
+            throw "Expected installer was not created: $installer"
+          }
+
+          $stream = [System.IO.File]::OpenRead($installer)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            if ($reader.ReadUInt16() -ne 0x5A4D) {
+              throw 'The installer does not have a Windows executable header.'
+            }
+            $stream.Position = 0x3C
+            $peOffset = $reader.ReadInt32()
+            if ($peOffset -lt 64 -or $peOffset -gt ($stream.Length - 4)) {
+              throw 'The installer has an invalid PE header offset.'
+            }
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) {
+              throw 'The installer does not contain a valid PE signature.'
+            }
+          } finally {
+            $stream.Dispose()
+          }
+
+          $installResult = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($installResult.ExitCode -ne 0) {
+            throw "Silent installer exited with code $($installResult.ExitCode)."
+          }
+
+          function Get-CutlineUninstallEntry {
+            $roots = @(
+              'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+              'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+              'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+            )
+            foreach ($root in $roots) {
+              if (Test-Path $root) {
+                foreach ($key in Get-ChildItem $root -ErrorAction SilentlyContinue) {
+                  $entry = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
+                  if ($entry.DisplayName -like 'Cutline*' -and $entry.DisplayVersion -eq '1.0.0') {
+                    $entry
+                  }
+                }
+              }
+            }
+          }
+
+          $entry = Get-CutlineUninstallEntry | Select-Object -First 1
+          if (-not $entry) {
+            throw 'Cutline 1.0.0 was not registered in Windows uninstall metadata.'
+          }
+
+          $appExe = $null
+          if ($entry.DisplayIcon -match '^\s*"([^"]+)"') {
+            $appExe = $Matches[1]
+          } elseif ($entry.DisplayIcon) {
+            $appExe = ([string]$entry.DisplayIcon -replace ',\d+$', '')
+          } elseif ($entry.InstallLocation) {
+            $appExe = Join-Path $entry.InstallLocation 'Cutline.exe'
+          }
+          if (-not $appExe -or -not (Test-Path $appExe)) {
+            throw "Could not locate the installed Cutline executable. DisplayIcon: $($entry.DisplayIcon)"
+          }
+
+          $appStream = [System.IO.File]::OpenRead($appExe)
+          try {
+            $appReader = [System.IO.BinaryReader]::new($appStream)
+            $appStream.Position = 0x3C
+            $appPeOffset = $appReader.ReadInt32()
+            $appStream.Position = $appPeOffset
+            if ($appReader.ReadUInt32() -ne 0x00004550) {
+              throw 'The installed Cutline app has an invalid PE signature.'
+            }
+            $appStream.Position = $appPeOffset + 4
+            if ($appReader.ReadUInt16() -ne 0x8664) {
+              throw 'The installed Cutline app is not a Windows x64 executable.'
+            }
+          } finally {
+            $appStream.Dispose()
+          }
+
+          function Test-CutlineShortcut {
+            param([string[]]$Roots, [string]$Target)
+            $shell = New-Object -ComObject WScript.Shell
+            $fullTarget = [System.IO.Path]::GetFullPath($Target)
+            foreach ($root in $Roots) {
+              if (Test-Path $root) {
+                foreach ($link in Get-ChildItem $root -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue) {
+                  try {
+                    $shortcut = $shell.CreateShortcut($link.FullName)
+                    if ($shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath) -ieq $fullTarget) {
+                      return $true
+                    }
+                  } catch {
+                    continue
+                  }
+                }
+              }
+            }
+            return $false
+          }
+
+          $desktopRoots = @("$env:USERPROFILE\Desktop", "$env:PUBLIC\Desktop")
+          $startMenuRoots = @(
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+            "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
+          )
+          if (-not (Test-CutlineShortcut -Roots $desktopRoots -Target $appExe)) {
+            throw 'The Cutline desktop shortcut was not installed.'
+          }
+          if (-not (Test-CutlineShortcut -Roots $startMenuRoots -Target $appExe)) {
+            throw 'The Cutline Start Menu shortcut was not installed.'
+          }
+
+          $appProcess = Start-Process -FilePath $appExe -PassThru -ErrorAction Stop
+          Start-Sleep -Seconds 8
+          $appProcess.Refresh()
+          if ($appProcess.HasExited) {
+            throw "Cutline exited immediately after launch (exit code $($appProcess.ExitCode))."
+          }
+          Stop-Process -Id $appProcess.Id -Force
+          Wait-Process -Id $appProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
+
+          if ($entry.UninstallString -match '^\s*"([^"]+)"') {
+            $uninstaller = $Matches[1]
+          } elseif ($entry.UninstallString -match '^\s*(.+?\.exe)') {
+            $uninstaller = $Matches[1]
+          } else {
+            throw "Could not parse the Windows uninstall command: $($entry.UninstallString)"
+          }
+          if (-not (Test-Path $uninstaller)) {
+            throw "The registered uninstaller is missing: $uninstaller"
+          }
+
+          $uninstallResult = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($uninstallResult.ExitCode -ne 0) {
+            throw "Silent uninstaller exited with code $($uninstallResult.ExitCode)."
+          }
+          Start-Sleep -Seconds 2
+          if (Test-Path $appExe) {
+            throw 'Cutline executable remains after uninstall.'
+          }
+          if (Get-CutlineUninstallEntry) {
+            throw 'Cutline remains in Windows uninstall metadata after uninstall.'
+          }
+          if ((Test-CutlineShortcut -Roots $desktopRoots -Target $appExe) -or
+              (Test-CutlineShortcut -Roots $startMenuRoots -Target $appExe)) {
+            throw 'A Cutline shortcut remains after uninstall.'
+          }
+
+      - name: Upload verified installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cutline-1.0.0-Setup
+          path: artifacts/cutline-editor/desktop-release/Cutline-1.0.0-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
