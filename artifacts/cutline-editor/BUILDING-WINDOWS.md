@@ -35,3 +35,24 @@ Do not use a leftover `.exe` if the build exits with an error; NSIS can leave a 
 ## Linux/Replit limitation
 
 The current Replit Linux/Nix host can package the Windows app payload but cannot finish the NSIS installer: Wine fails while starting its RPC service. It leaves a small NSIS stub without the application payload; that file is not a usable installer. Build on a native Windows machine instead. The Windows build has not yet been run or verified.
+
+## Validation before a Windows release
+
+Run these automated checks from the repository root before packaging:
+
+```bash
+pnpm --filter @workspace/cutline-editor run test:audio
+pnpm --filter @workspace/cutline-editor run test:composition
+pnpm --filter @workspace/cutline-editor run test:desktop
+```
+
+The browser codec check (`pnpm --filter @workspace/cutline-editor run test:audio:browser`) must run in the Replit environment with the editor preview available at `/`. It encodes and decodes a synthetic 18.114-second audio/video sample; it does not replace checking a real project export on Windows.
+
+On a native Windows machine, build and launch the installer, then verify both formats against actual browser/system codec support:
+
+1. Export a project with continuous audio, a trimmed clip, a split clip, overlapping audio, and audio from a video/overlay clip. Confirm there are no gaps and audio ends with the video.
+2. Confirm MP4 is offered only when AVC/AAC encoding is available, WebM still exports when VP8/Opus are available, and unsupported codecs produce a clear error.
+3. Enable Rich Presence only after configuring a Discord Application ID. Verify activity updates and reconnect behavior with Discord open and closed; keep project-name sharing off unless explicitly testing the opt-in.
+4. Run the installer, launch Cutline, and confirm it opens before treating the installer as distributable.
+
+Current verification is limited to the Linux/Replit host: the browser WebM sample passes with no silent windows and 13 ms audio/video duration difference; this Chromium does not support the MP4 profile. The Windows installer, actual Windows codec selection, and live Discord behavior still require native Windows testing.
