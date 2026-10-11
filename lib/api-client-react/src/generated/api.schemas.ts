@@ -14,6 +14,8 @@ export interface TeamMember {
   name: string;
   role: string;
   /** @nullable */
+  displayName: string | null;
+  /** @nullable */
   username: string | null;
   /** @nullable */
   avatarUrl: string | null;

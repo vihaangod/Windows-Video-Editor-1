@@ -27,6 +27,7 @@ export const GetTeamProfilesResponse = zod.object({
   "slug": zod.string(),
   "name": zod.string(),
   "role": zod.string(),
+  "displayName": zod.string().nullable(),
   "username": zod.string().nullable(),
   "avatarUrl": zod.string().nullable(),
   "profileAvailable": zod.boolean()

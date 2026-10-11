@@ -57,6 +57,8 @@ components:
           type: string
         role:
           type: string
+        displayName:
+          type: ["string", "null"]
         username:
           type: ["string", "null"]
         avatarUrl:
@@ -67,6 +69,7 @@ components:
         - slug
         - name
         - role
+        - displayName
         - username
         - avatarUrl
         - profileAvailable
