@@ -5,3 +5,4 @@
 - [Timeline audio export timing](editor-audio-export-timing.md) — render audio against project timestamps, not a real-time stream whose duration follows encoder speed.
 - [CSS marquee test isolation](marquee-animation-tests.md) — test hover and focus on the natural animation before seeking it with WAAPI.
 - [Windows release dependencies](cutline-windows-release.md) — keep x64 Windows optional native packages available for Electron packaging.
+- [GitHub release authentication](cutline-github-auth.md) — verify Git transport access directly; a healthy or attached Replit GitHub connection may not authenticate private-repository pushes.
