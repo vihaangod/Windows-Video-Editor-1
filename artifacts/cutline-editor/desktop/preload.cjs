@@ -6,6 +6,8 @@ const MEDIA_RELEASE_CHANNEL = 'cutline:release-media-files';
 const CLOSE_REQUESTED_CHANNEL = 'cutline:close-requested';
 const CLOSE_CANCELLED_CHANNEL = 'cutline:close-cancelled';
 const CLOSE_RESULT_CHANNEL = 'cutline:close-result';
+const RICH_PRESENCE_UPDATE_CHANNEL = 'cutline:rich-presence-update';
+const RICH_PRESENCE_STATUS_CHANNEL = 'cutline:rich-presence-status';
 const MAX_MEDIA_NAME_LENGTH = 120;
 const MAX_CLIP_COUNT = 1_000_000;
 const MAX_MEDIA_FILE_COUNT = 500;
@@ -51,6 +53,29 @@ const desktopBridge = Object.freeze({
       return Promise.resolve(false);
     }
     return ipcRenderer.invoke(CLOSE_RESULT_CHANNEL, { requestId, saved });
+  },
+  updateRichPresence(settings) {
+    const input = settings && typeof settings === 'object' ? settings : {};
+    const workflow = ['editing', 'exporting', 'media-library'].includes(input.workflow)
+      ? input.workflow
+      : 'editing';
+    return ipcRenderer.invoke(RICH_PRESENCE_UPDATE_CHANNEL, {
+      enabled: input.enabled === true,
+      clientId: typeof input.clientId === 'string' ? input.clientId.slice(0, 64) : '',
+      imageKey: typeof input.imageKey === 'string' ? input.imageKey.slice(0, 48) : '',
+      shareProjectName: input.shareProjectName === true,
+      workflow,
+      ...(typeof input.projectName === 'string' ? { projectName: input.projectName.slice(0, 128) } : {}),
+    });
+  },
+  onRichPresenceStatus(listener) {
+    if (typeof listener !== 'function') return () => {};
+    const allowedStatuses = new Set(['disabled', 'needs-setup', 'connecting', 'connected', 'unavailable']);
+    const handler = (_event, status) => {
+      if (allowedStatuses.has(status)) listener(status);
+    };
+    ipcRenderer.on(RICH_PRESENCE_STATUS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(RICH_PRESENCE_STATUS_CHANNEL, handler);
   },
 });
 

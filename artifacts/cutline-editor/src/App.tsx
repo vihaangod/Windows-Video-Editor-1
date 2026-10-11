@@ -1,15 +1,18 @@
-import { type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, CircleAlert, Clapperboard,
   Copy, Download, Eye, EyeOff, FileAudio, FileImage, FilePlus2, Film, FolderOpen,
   Cloud, CloudUpload, Folder, FolderInput, HardDrive, Info, Layers2, LockKeyhole, Magnet, Minus, Music2, Pause, Pencil, Play, Plus, Redo2,
-  RefreshCw, Search, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
+  RefreshCw, Search, Settings2, SlidersHorizontal, SkipBack, SkipForward, Sparkles, Split,
   Trash2, Type, Undo2, UnlockKeyhole, Upload, UserRound, Volume2, VolumeX, WandSparkles,
 } from 'lucide-react';
-import {
-  ALL_FORMATS, BlobSource, BufferTarget, CanvasSource, Input, MediaStreamAudioTrackSource, Mp4OutputFormat,
-  Output, Quality, StreamTarget, WebMOutputFormat, canEncode,
-  type StreamTargetChunk,
+import type {
+  BufferTarget as BufferTargetType,
+  CanvasSource,
+  MediaStreamAudioTrackSource,
+  Output as OutputType,
+  StreamTarget as StreamTargetType,
+  StreamTargetChunk,
 } from 'mediabunny';
 import NotFound from '@/pages/not-found';
 import ContextMenu, { type ContextMenuItem } from '@/components/ContextMenu';
@@ -48,10 +51,46 @@ import {
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
 type Notice = { message: string; error?: boolean };
+type RichPresenceStatus = 'disabled' | 'needs-setup' | 'connecting' | 'connected' | 'unavailable';
+type RichPresencePreferences = {
+  enabled: boolean;
+  clientId: string;
+  imageKey: string;
+  shareProjectName: boolean;
+};
+const DEFAULT_RICH_PRESENCE_PREFERENCES: RichPresencePreferences = {
+  enabled: false,
+  clientId: '',
+  imageKey: '',
+  shareProjectName: false,
+};
+const RICH_PRESENCE_STATUS_LABELS: Record<RichPresenceStatus, string> = {
+  disabled: 'Disabled',
+  'needs-setup': 'Needs setup',
+  connecting: 'Connecting to Discord',
+  connected: 'Connected to Discord',
+  unavailable: 'Discord is unavailable',
+};
+
+function readRichPresencePreferences(): RichPresencePreferences {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem('cutline-rich-presence-v1') || 'null') as Partial<RichPresencePreferences> | null;
+    return {
+      enabled: parsed?.enabled === true,
+      clientId: typeof parsed?.clientId === 'string' ? parsed.clientId.slice(0, 64) : '',
+      imageKey: typeof parsed?.imageKey === 'string' ? parsed.imageKey.slice(0, 48) : '',
+      shareProjectName: parsed?.shareProjectName === true,
+    };
+  } catch {
+    return { ...DEFAULT_RICH_PRESENCE_PREFERENCES };
+  }
+}
+
 const DB_NAME = 'cutline-local-editor-v1';
 const DB_VERSION = 5;
 const EXPANDED_PROJECT_FOLDERS_KEY = 'cutline-project-library-expanded-folders-v1';
 const LAST_ACTIVE_PROJECT_KEY = 'cutline-last-active-project-v1';
+const RICH_PRESENCE_SETTINGS_KEY = 'cutline-rich-presence-v1';
 const LEGACY_STORE = 'projects';
 const PROJECT_STORE = 'project-meta';
 const MEDIA_STORE = 'project-media';
@@ -816,6 +855,7 @@ async function inspectImportedAsset(asset: Asset) {
       }
       asset.thumbnail = mediaThumbnail(media, media.videoWidth, media.videoHeight);
       try {
+        const { ALL_FORMATS, BlobSource, Input } = await import('mediabunny');
         const input = new Input({ source: new BlobSource(asset.blob), formats: ALL_FORMATS });
         try {
           asset.hasAudio = (await input.getAudioTracks()).length > 0;
@@ -852,7 +892,10 @@ function Home() {
   const [muted, setMuted] = useState(false);
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [dialog, setDialog] = useState<'project' | 'export' | null>(null);
+  const [dialog, setDialog] = useState<'project' | 'export' | 'settings' | null>(null);
+  const [richPresencePreferences, setRichPresencePreferences] = useState<RichPresencePreferences>(readRichPresencePreferences);
+  const [richPresenceDraft, setRichPresenceDraft] = useState<RichPresencePreferences>(readRichPresencePreferences);
+  const [richPresenceStatus, setRichPresenceStatus] = useState<RichPresenceStatus>('disabled');
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>([]);
@@ -968,6 +1011,34 @@ function Home() {
       // Expanded folders are a convenience preference; project data remains in IndexedDB.
     }
   }, [expandedProjectFolders]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(RICH_PRESENCE_SETTINGS_KEY, JSON.stringify(richPresencePreferences));
+    } catch {
+      // Presence settings are optional and remain disabled unless saved locally.
+    }
+  }, [richPresencePreferences]);
+  useEffect(() => window.cutlineDesktop?.onRichPresenceStatus(setRichPresenceStatus), []);
+  useEffect(() => {
+    const desktop = window.cutlineDesktop;
+    if (!desktop?.updateRichPresence || !projectHydrated) return;
+    let active = true;
+    const workflow = exporting
+      ? 'exporting'
+      : !hasActiveProject || dialog === 'project'
+        ? 'media-library'
+        : 'editing';
+    void desktop.updateRichPresence({
+      ...richPresencePreferences,
+      workflow,
+      ...(hasActiveProject ? { projectName: project.name } : {}),
+    }).then((status) => {
+      if (active) setRichPresenceStatus(status);
+    }).catch(() => {
+      if (active) setRichPresenceStatus('unavailable');
+    });
+    return () => { active = false; };
+  }, [dialog, exporting, hasActiveProject, project.name, projectHydrated, richPresencePreferences]);
   projectRef.current = project;
   selectionRef.current = { clipId: selectedClipId, assetId: selectedAssetId };
   const assetsRef = useRef(assets);
@@ -3762,12 +3833,23 @@ function Home() {
     let audioSource: MediaStreamAudioTrackSource | null = null;
     let audioTrack: MediaStreamTrack | null = null;
     let videoSource: CanvasSource | null = null;
-    let output: Output | null = null;
+    let output: OutputType | null = null;
     let exportCanvas: HTMLCanvasElement | null = null;
     let diskWriter: WritableFile | null = null;
     let outputCompleted = false;
     let failureFromAudio: unknown = null;
     try {
+      const {
+        BufferTarget,
+        CanvasSource,
+        MediaStreamAudioTrackSource,
+        Mp4OutputFormat,
+        Output,
+        Quality,
+        StreamTarget,
+        WebMOutputFormat,
+        canEncode,
+      } = await import('mediabunny');
       if (typeof VideoEncoder === 'undefined' || typeof AudioEncoder === 'undefined') {
         throw new Error('This browser does not expose WebCodecs encoders. Update Edge or Chrome to a current version.');
       }
@@ -3780,7 +3862,7 @@ function Home() {
         throw new Error(`${codecs} encoding is not supported by this browser or hardware. Select the other format, or update your browser and graphics drivers.`);
       }
 
-      let target: BufferTarget | StreamTarget;
+      let target: BufferTargetType | StreamTargetType;
       if (outputDirectory) {
         const outputHandle = await outputDirectory.getFileHandle(outputFileName, { create: true });
         diskWriter = await (outputHandle.createWritable() as Promise<WritableFile>);
@@ -3991,7 +4073,6 @@ function Home() {
       };
       const updatedProject: Project = {
         ...currentProject,
-        folderId: exportRecord.folderId,
         exports: [...(currentProject.exports || []), exportRecord],
       };
       projectRef.current = updatedProject;
@@ -4005,7 +4086,7 @@ function Home() {
       const destination = exportFolderId === 'unorganized'
         ? 'Unorganized Projects'
         : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'the selected internal folder';
-      notify(`${outputMessage}. This project is now organized under “${destination}” in Cutline. The rendered file remains at the selected export location.`);
+      notify(`${outputMessage}. Export history was recorded under “${destination}” in Cutline. The project stays in its current folder, and the rendered file remains at the selected export location.`);
       setDialog(null);
     } catch (error) {
       if (exportCancelRequested.current && error instanceof DOMException && error.name === 'AbortError') {
@@ -4328,6 +4409,7 @@ function Home() {
         <button className="btn" onClick={openProjects} disabled={mediaImporting} title={mediaImporting ? 'Wait for media import to finish' : 'Manage projects'} aria-label="Open projects manager" data-testid="button-open-project"><FolderOpen size={14} /><span>Projects</span></button>
         <button className="btn" onClick={() => void saveNow()} data-testid="button-save-project"><HardDrive size={14} /><span>Save</span></button>
         <button className="btn" onClick={() => setAccountDialogOpen(true)} title={cloud.session ? `Signed in as ${cloud.session.user.email || 'Supabase user'}` : 'Sign in or create a Cutline account'} data-testid="button-account"><UserRound size={14} /><span>{cloud.session ? 'Account' : 'Sign in'}</span></button>
+        <button className="icon-btn" type="button" onClick={() => { setRichPresenceDraft({ ...richPresencePreferences }); setDialog('settings'); }} title="Settings" aria-label="Open settings" data-testid="button-settings"><Settings2 size={15} /></button>
          <button className="btn primary" onClick={() => { setExportFolderId(project.folderId || 'unorganized'); setExportName(sanitizeExportBaseName(`${project.name}-export`)); setDialog('export'); }} data-testid="button-export"><Download size={14} /><span>Export</span></button>
       </header>
       <section className="editor-body">
@@ -5148,6 +5230,87 @@ function Home() {
             </button>
           </div>
         </section>
+      </div>}
+      {dialog === 'settings' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null); }}>
+        <form
+          className="dialog rich-presence-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rich-presence-title"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setRichPresencePreferences({
+              enabled: richPresenceDraft.enabled,
+              clientId: richPresenceDraft.clientId.trim(),
+              imageKey: richPresenceDraft.imageKey.trim(),
+              shareProjectName: richPresenceDraft.shareProjectName,
+            });
+            setDialog(null);
+          }}
+        >
+          <h2 id="rich-presence-title">Settings</h2>
+          <p>Configure optional Discord Rich Presence. It connects to the Discord desktop app from Cutline’s Electron process; it does not upload media.</p>
+          <div className={`rich-presence-status rich-presence-status--${richPresenceStatus}`} role="status" aria-live="polite">
+            <span className="rich-presence-status__dot" />
+            <strong>{window.cutlineDesktop?.updateRichPresence ? RICH_PRESENCE_STATUS_LABELS[richPresenceStatus] : 'Desktop app required'}</strong>
+          </div>
+          <p className="rich-presence-help">
+            {!window.cutlineDesktop?.updateRichPresence
+              ? 'This browser preview cannot connect to Discord. Use the installed Cutline desktop app.'
+              : richPresenceStatus === 'connected'
+                ? 'Cutline is sharing its current activity with Discord.'
+                : richPresenceStatus === 'unavailable'
+                  ? 'Discord is not responding. Cutline will retry in the background; editing and local saves continue normally.'
+                  : richPresenceStatus === 'needs-setup'
+                    ? 'Enter a valid Application ID below and save to finish setup.'
+                    : 'Presence is optional and can be turned off here at any time.'}
+          </p>
+          <label className="rich-presence-option">
+            <input
+              type="checkbox"
+              checked={richPresenceDraft.enabled}
+              onChange={(event) => setRichPresenceDraft((current) => ({ ...current, enabled: event.target.checked }))}
+            />
+            <span><strong>Enable Rich Presence</strong><small>Disabled by default. Requires Discord to be running on this computer.</small></span>
+          </label>
+          <label htmlFor="discord-application-id">Discord Application ID</label>
+          <input
+            id="discord-application-id"
+            value={richPresenceDraft.clientId}
+            onChange={(event) => setRichPresenceDraft((current) => ({ ...current, clientId: event.target.value }))}
+            placeholder="Paste the Application ID"
+            inputMode="numeric"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={64}
+          />
+          <p className="rich-presence-help">
+            In the <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Discord Developer Portal</a>, create an application named “Cutline” and copy its Application ID. The ID is public and is stored with these settings on this device.
+          </p>
+          <label htmlFor="discord-image-key">Large image asset key (optional)</label>
+          <input
+            id="discord-image-key"
+            value={richPresenceDraft.imageKey}
+            onChange={(event) => setRichPresenceDraft((current) => ({ ...current, imageKey: event.target.value }))}
+            placeholder="For example: cutline"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={48}
+          />
+          <p className="rich-presence-help">Upload an image in that application’s Rich Presence art assets and enter its exact key. Leave blank to omit the image.</p>
+          <label className="rich-presence-option">
+            <input
+              type="checkbox"
+              checked={richPresenceDraft.shareProjectName}
+              onChange={(event) => setRichPresenceDraft((current) => ({ ...current, shareProjectName: event.target.checked }))}
+            />
+            <span><strong>Share the current project name</strong><small>Off by default. File paths and media contents are never sent.</small></span>
+          </label>
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={() => setDialog(null)}>Cancel</button>
+            <button type="submit" className="btn primary">Save settings</button>
+          </div>
+        </form>
       </div>}
       {dialog === 'export' && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !exporting) setDialog(null); }}>
         <section className="dialog" aria-label="Export project">

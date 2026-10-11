@@ -2,3 +2,4 @@
 - [WebCodecs fallback](webcodecs-encoder-selection.md) — leave hardware acceleration at no preference so unsupported GPUs can fall back to software encoding.
 - [Supabase configuration](cutline-supabase-config.md) — use the editor's Vite environment config for the Supabase browser client, not Replit Secrets.
 - [Cloud flow verification](cutline-cloud-verification.md) — only call cloud save and desktop restart behavior verified after an authenticated end-to-end test.
+- [Timeline audio export timing](editor-audio-export-timing.md) — render audio against project timestamps, not a real-time stream whose duration follows encoder speed.

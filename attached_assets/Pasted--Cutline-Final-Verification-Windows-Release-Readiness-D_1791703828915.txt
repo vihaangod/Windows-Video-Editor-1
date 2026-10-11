@@ -1,0 +1,107 @@
+## Cutline — Final Verification, Windows Release Readiness & Discord Rich Presence
+
+Continue working on the existing Cutline project. Do not rewrite working features or remove any implemented functionality.
+
+The latest update reports that typecheck passed, all 39 tests passed, the production web build succeeded, and the editor rendered in preview. However, the Windows NSIS installer and real-footage export playback have not been verified.
+
+### 1. Review the latest implementation
+- Inspect the changes to Video Track, Clip Track, overlays, transitions, project folders, saving/loading, and logo assets.
+- Fix obvious regressions or incomplete implementations.
+- Confirm that all 20 transition options represent real effects rather than labels or thumbnails only.
+
+### 2. Test real video behavior
+- Test the base video with an overlay placed in the middle of the timeline.
+- Confirm that the overlay appears at the correct time and the base video resumes afterward.
+- Test multiple overlays, clip trimming, moving, and transitions between supported clips.
+- Export a real sample video and verify playback, audio synchronization, transition timing, and the absence of unexpected black frames.
+- If real media or a suitable test environment is unavailable, report the limitation instead of claiming success.
+
+### 3. Verify project persistence
+- Save a project into a new folder and reopen it.
+- Confirm that clips, track assignments, overlays, titles, transitions, and timeline positions are restored.
+- Verify that re-exporting does not create duplicate folders or project entries.
+- Verify the 10-folder limit and folder search.
+
+### 4. Verify logo assets
+- Inspect the actual PNG transparency and Windows ICO files.
+- Check the application header, desktop/window icon, and installer icon wherever the environment permits.
+- Correct any remaining whitish edge halos or incorrect icon references.
+
+### 5. Prepare the Windows installer
+- Inspect the existing Electron configuration and Windows build scripts before making changes.
+- Preserve the current Electron setup and application branding.
+- If Windows packaging cannot run in the current Linux workspace, use an appropriate Windows CI workflow or provide precise Windows build instructions.
+- Do not claim that the installer has been built or tested unless that actually happened.
+
+### 6. Review the large JavaScript chunk warning
+- Identify the largest bundles and determine whether safe code splitting or lazy loading would help.
+- Make performance improvements only when appropriate.
+- Do not disable warnings merely to make the build appear clean.
+
+### 7. Add Discord Rich Presence
+
+Implement genuine **Discord Rich Presence integration** for the Cutline desktop application.
+
+**Connection and setup**
+- Use Discord's supported Rich Presence approach for desktop applications, such as the appropriate Discord RPC integration.
+- Inspect the existing Electron architecture and implement the integration in the correct Electron main-process layer.
+- Keep RPC functionality separate from the React renderer where appropriate.
+- Provide clear setup instructions for configuring the Discord application/client ID and any required image assets.
+- Do not hardcode a fake client ID or claim a connection succeeded when Discord is unavailable.
+- Keep Discord credentials and integration configuration out of publicly exposed renderer code where applicable.
+
+**Presence information**
+When Discord is running and Rich Presence is available, show useful, accurate information such as:
+- Application name: Cutline.
+- Current activity: Editing a video in Cutline.
+- Current project name, when a project is open and it is safe to display.
+- Current workflow, such as editing, exporting, or viewing the media library.
+- Elapsed activity time if it can be implemented accurately.
+- Appropriate Cutline logo or activity image, if configured correctly.
+
+Do not expose local file paths, private media names, or other sensitive project details by default. Provide an option to hide the project name or disable Rich Presence entirely.
+
+**Status updates**
+- Update presence when the user opens or closes a project, starts or finishes an export, changes to the media library, or exits the application.
+- Do not update the status excessively or continuously when nothing meaningful changes.
+- Show exporting status only while an export is actually in progress.
+- Clear the presence or disconnect cleanly when Cutline closes.
+- Handle Discord not being installed, not running, unavailable, or refusing a connection without crashing Cutline.
+- Rich Presence must be optional and must not block editing, saving, or exporting.
+- Avoid unnecessary background CPU or memory usage.
+
+**Settings and user experience**
+- Add a Rich Presence toggle in the existing settings interface, if available.
+- Provide a clear enabled/disabled state and helpful error or setup messages.
+- Store the user's preference using the existing settings persistence mechanism.
+- When disabled, do not reconnect or publish activity.
+- Keep the UI consistent with Cutline's existing dark-and-golden design.
+
+**Verification**
+- Test presence updates using mocks or automated tests where a real Discord session is unavailable.
+- Verify graceful behavior when Discord is not running.
+- Test that turning Rich Presence off stops further updates.
+- Test project privacy settings and export status transitions.
+- Do not claim live Discord Rich Presence has been verified unless it has actually been tested with Discord.
+
+### 8. Run final checks
+- Run the available typecheck, automated tests, and production build.
+- Fix regressions caused by these changes.
+- Check that Rich Presence does not interfere with the existing Electron startup or shutdown sequence.
+- Confirm that the existing editing features, folder library, transitions, logo assets, and export options remain functional.
+
+### 9. Final delivery report
+Provide a concise, honest report covering:
+- Features implemented.
+- Tests that passed.
+- Tests that failed.
+- Features that remain incomplete.
+- Real-footage export verification status.
+- Windows installer build and installation verification status.
+- Discord Rich Presence integration and live-connection verification status.
+- Any remaining limitations or setup requirements.
+
+Do not publish the app automatically. Preserve the existing source project and user data. Do not claim a test passed unless it was actually run and its result verified.
+
+## Final instruction
+Make changes to the existing Cutline project only. Preserve working functionality and project compatibility. Prioritize stable, testable behavior over superficial UI changes.

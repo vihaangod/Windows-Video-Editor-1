@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ensureProjectTimelineTracks, getActiveTimelineFilters, getPreviewCanvasSize, removeAssetReferencesFromProject, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
+import { ensureProjectTimelineTracks, getActiveTimelineFilters, getPreviewCanvasSize, removeAssetReferencesFromProject, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Asset, type ClipTransition, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -19,6 +19,71 @@ function createContext(width: number, height: number) {
   } as unknown as CanvasRenderingContext2D;
 
   return { context, calls };
+}
+
+function createTransitionContext(width: number, height: number) {
+  type RecordedCall = { name: string; args: unknown[]; alpha: number; filter: string; fillStyle: string };
+  const calls: RecordedCall[] = [];
+  const stack: Array<{ globalAlpha: number; filter: string; fillStyle: string; globalCompositeOperation: string }> = [];
+  let context: CanvasRenderingContext2D;
+  const record = (name: string, ...args: unknown[]) => calls.push({
+    name,
+    args,
+    alpha: context.globalAlpha,
+    filter: context.filter,
+    fillStyle: context.fillStyle,
+  });
+  context = {
+    canvas: { width, height },
+    globalAlpha: 1,
+    filter: 'none',
+    fillStyle: '#000',
+    globalCompositeOperation: 'source-over',
+    save: () => {
+      stack.push({
+        globalAlpha: context.globalAlpha,
+        filter: context.filter,
+        fillStyle: String(context.fillStyle),
+        globalCompositeOperation: context.globalCompositeOperation,
+      });
+      record('save');
+    },
+    restore: () => {
+      record('restore');
+      const state = stack.pop();
+      if (state) Object.assign(context, state);
+    },
+    setTransform: (...args: number[]) => record('setTransform', ...args),
+    clearRect: (...args: number[]) => record('clearRect', ...args),
+    fillRect: (...args: number[]) => record('fillRect', ...args),
+    beginPath: () => record('beginPath'),
+    rect: (...args: number[]) => record('rect', ...args),
+    arc: (...args: number[]) => record('arc', ...args),
+    ellipse: (...args: number[]) => record('ellipse', ...args),
+    moveTo: (...args: number[]) => record('moveTo', ...args),
+    lineTo: (...args: number[]) => record('lineTo', ...args),
+    closePath: () => record('closePath'),
+    clip: () => record('clip'),
+    drawImage: (...args: unknown[]) => record('drawImage', ...args),
+    translate: (...args: number[]) => record('translate', ...args),
+    rotate: (...args: number[]) => record('rotate', ...args),
+    scale: (...args: number[]) => record('scale', ...args),
+    fill: () => record('fill'),
+    stroke: () => record('stroke'),
+    measureText: (text: string) => ({ width: text.length * 10 }),
+    fillText: (...args: unknown[]) => record('fillText', ...args),
+  } as unknown as CanvasRenderingContext2D;
+  return { context, calls };
+}
+
+class TransitionTestImage {
+  label: string;
+  naturalWidth = 320;
+  naturalHeight = 180;
+  complete = true;
+  constructor(label: string) {
+    this.label = label;
+  }
 }
 
 function textProject(): Project {
@@ -116,6 +181,79 @@ test('default rendering still composites text for full-resolution exports', () =
   renderProjectFrame(context, textProject(), [], new Map(), 1, false);
   assert.ok(calls.some((call) => call.name === 'fillRect'));
   assert.ok(calls.some((call) => call.name === 'fillText'));
+});
+
+test('all twenty transition types render distinct canvas effects between clips', () => {
+  const previousImageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'HTMLImageElement');
+  const previousVideoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'HTMLVideoElement');
+  Object.defineProperty(globalThis, 'HTMLImageElement', {
+    value: TransitionTestImage as unknown as typeof HTMLImageElement,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'HTMLVideoElement', {
+    value: class TransitionTestVideo {},
+    configurable: true,
+  });
+  const types: ClipTransition['type'][] = [
+    'fade', 'cross-dissolve', 'fade-through-black', 'wipe', 'slide', 'zoom', 'zoom-in', 'zoom-out',
+    'split-horizontal', 'split-vertical', 'doors', 'blinds', 'iris', 'circle', 'diamond',
+    'blur-dissolve', 'push', 'curtain', 'flash', 'diagonal',
+  ];
+  const signatures = new Map<ClipTransition['type'], string>();
+  try {
+    const assets: Asset[] = ['asset-from', 'asset-to'].map((id) => ({
+      id,
+      name: `${id}.png`,
+      mimeType: 'image/png',
+      byteSize: 1,
+      width: 320,
+      height: 180,
+      blob: new Blob(['image'], { type: 'image/png' }),
+    }));
+    const media = new Map<string, HTMLImageElement>(assets.map((asset) => [
+      asset.id,
+      new TransitionTestImage(asset.id) as unknown as HTMLImageElement,
+    ]));
+    for (const type of types) {
+      const project: Project = {
+        id: 'transition-test',
+        name: 'Distinct transition effects',
+        width: 320,
+        height: 180,
+        frameRate: 30,
+        tracks: [{ id: 'video', name: 'Video Track', kind: 'video', order: 0, muted: false, visible: true, locked: false }],
+        clips: [
+          { id: 'from', assetId: 'asset-from', trackId: 'video', timelineStart: 0, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+          { id: 'to', assetId: 'asset-to', trackId: 'video', timelineStart: 2, sourceIn: 0, sourceOut: 2, volume: 1, speed: 1 },
+        ],
+        transitions: [{
+          id: 'transition',
+          fromClipId: 'from',
+          toClipId: 'to',
+          type,
+          duration: 1,
+          mode: 'between',
+          direction: 'right',
+        }],
+      };
+      const { context, calls } = createTransitionContext(320, 180);
+      renderProjectFrame(context, project, assets, media, 1.9, false);
+      const renderCalls = calls.filter(({ name }) => [
+        'drawImage', 'rect', 'arc', 'ellipse', 'moveTo', 'lineTo', 'closePath',
+        'translate', 'scale', 'fillRect',
+      ].includes(name));
+      assert.ok(renderCalls.some((call) => call.name === 'drawImage'), `${type} draws a clip frame`);
+      signatures.set(type, JSON.stringify(renderCalls));
+    }
+  } finally {
+    if (previousImageDescriptor) Object.defineProperty(globalThis, 'HTMLImageElement', previousImageDescriptor);
+    else Reflect.deleteProperty(globalThis, 'HTMLImageElement');
+    if (previousVideoDescriptor) Object.defineProperty(globalThis, 'HTMLVideoElement', previousVideoDescriptor);
+    else Reflect.deleteProperty(globalThis, 'HTMLVideoElement');
+  }
+
+  assert.equal(types.length, 20);
+  assert.equal(new Set(signatures.values()).size, types.length, 'each transition has a distinct rendering path');
 });
 
 test('timeline filters activate only inside both their own range and the linked video range', () => {

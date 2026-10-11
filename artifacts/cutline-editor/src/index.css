@@ -261,6 +261,19 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .dialog h2 { margin:0; font-size:17px; letter-spacing:-.03em; }.dialog p { color:#98a0a9; font-size:11px; line-height:1.6; }
 .dialog label { display:block; margin:15px 0 6px; font-size:10px; color:#aeb4bb; }
 .dialog input { width:100%; height:36px; padding:0 10px; background:#171a20; color:#e7e9ea; border:1px solid #414852; border-radius:5px; outline:none; font-size:11px; }
+.rich-presence-dialog { width:min(510px,100%); max-height:min(88dvh,720px); overflow:auto; }
+.rich-presence-dialog .rich-presence-status { display:flex; align-items:center; gap:8px; margin-top:14px; padding:9px 10px; border:1px solid #3d444e; border-radius:5px; background:#191d23; color:#c5cbd3; font-size:10px; }
+.rich-presence-status__dot { width:7px; height:7px; flex:none; border-radius:50%; background:#7f8791; }
+.rich-presence-status--connected .rich-presence-status__dot { background:#62c28d; box-shadow:0 0 8px #62c28d66; }
+.rich-presence-status--connecting .rich-presence-status__dot { background:#e6b84e; }
+.rich-presence-status--unavailable .rich-presence-status__dot,.rich-presence-status--needs-setup .rich-presence-status__dot { background:#dd8c7e; }
+.rich-presence-dialog .rich-presence-help { margin:6px 0 12px; color:#929aa4; font-size:9px; }
+.rich-presence-dialog .rich-presence-help a { color:#e4b955; }
+.dialog .rich-presence-option { display:flex; align-items:flex-start; gap:9px; margin:13px 0 0; padding:10px; border:1px solid #3b424c; border-radius:5px; background:#191d23; color:#dce0e5; cursor:pointer; }
+.dialog .rich-presence-option input[type=checkbox] { width:14px; height:14px; flex:none; margin:1px 0 0; padding:0; accent-color:#edb94e; }
+.rich-presence-option span { display:flex; flex-direction:column; gap:4px; }
+.rich-presence-option strong { font-size:10px; }
+.rich-presence-option small { color:#929aa4; font-size:9px; line-height:1.4; }
 .dialog .cutline-select-trigger { height:36px; min-height:36px; font-size:11px; }
 .dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:21px; }
 .media-remove-backdrop { z-index:40; }

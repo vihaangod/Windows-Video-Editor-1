@@ -1121,7 +1121,37 @@ export function renderProjectFrame(
       const direction = getTransitionDirection(transition);
       const directionX = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
       const directionY = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
-      if (transition.type === 'slide' || transition.type === 'push') {
+      if (transition.type === 'fade') {
+        if (progress < .5) {
+          drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
+            sampleTime: fromSample,
+            alpha: 1 - progress * 2,
+            fade: false,
+          });
+        } else {
+          drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
+            sampleTime: toSample,
+            alpha: (progress - .5) * 2,
+            fade: false,
+          });
+        }
+      } else if (transition.type === 'fade-through-black') {
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
+          sampleTime: fromSample,
+          alpha: 1 - progress,
+          fade: false,
+        });
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
+          sampleTime: toSample,
+          alpha: progress,
+          fade: false,
+        });
+        context.save();
+        context.globalAlpha = Math.max(0, 1 - Math.abs(progress * 2 - 1));
+        context.fillStyle = '#000';
+        context.fillRect(0, 0, project.width, project.height);
+        context.restore();
+      } else if (transition.type === 'slide' || transition.type === 'push') {
         const movingBoth = transition.type === 'push';
         drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
           sampleTime: fromSample,
@@ -1168,17 +1198,10 @@ export function renderProjectFrame(
         applyTransitionMask(context, transition.type, progress, direction, project.width, project.height);
         drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
           sampleTime: toSample,
-          alpha: transition.type === 'fade' || transition.type === 'cross-dissolve' ? progress : 1,
+          alpha: transition.type === 'cross-dissolve' ? progress : 1,
           fade: false,
         });
         context.restore();
-        if (transition.type === 'fade-through-black') {
-          context.save();
-          context.globalAlpha = Math.max(0, 1 - Math.abs(progress * 2 - 1));
-          context.fillStyle = '#000';
-          context.fillRect(0, 0, project.width, project.height);
-          context.restore();
-        }
       }
       if (fromClip.assetId) activeAssetIds.add(fromClip.assetId);
       if (toClip.assetId) activeAssetIds.add(toClip.assetId);

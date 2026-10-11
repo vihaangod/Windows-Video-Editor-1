@@ -19,7 +19,7 @@
     "test:autosave": "node --experimental-strip-types --test src/lib/save-queue.test.ts",
     "test:composition": "node --experimental-strip-types --test src/lib/composition.test.ts src/lib/transition-utils.test.ts",
     "test:cloud": "node --experimental-strip-types --test src/lib/cloud-projects.test.ts",
-    "test:desktop": "node --test desktop/security-utils.test.cjs"
+    "test:desktop": "node --test desktop/security-utils.test.cjs desktop/rich-presence.test.cjs"
   },
   "build": {
     "appId": "com.cutline.editor",
@@ -29,6 +29,7 @@
     },
     "files": [
       "desktop/**/*",
+      "desktop-assets/**/*",
       "dist/public/**/*",
       "package.json"
     ],
@@ -125,6 +126,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
+    "discord-rpc": "^4.0.1",
     "mediabunny": "^1.61.3"
   }
 }

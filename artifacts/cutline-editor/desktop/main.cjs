@@ -29,8 +29,11 @@ const MEDIA_RELEASE_CHANNEL = 'cutline:release-media-files';
 const CLOSE_REQUESTED_CHANNEL = 'cutline:close-requested';
 const CLOSE_CANCELLED_CHANNEL = 'cutline:close-cancelled';
 const CLOSE_RESULT_CHANNEL = 'cutline:close-result';
+const RICH_PRESENCE_UPDATE_CHANNEL = 'cutline:rich-presence-update';
+const RICH_PRESENCE_STATUS_CHANNEL = 'cutline:rich-presence-status';
 const CLOSE_SAVE_TIMEOUT_MS = 15_000;
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || '';
+const { createRichPresenceController } = require('./rich-presence.cjs');
 function getConfiguredSupabaseOrigin() {
   if (process.env.CUTLINE_SUPABASE_ORIGIN) return process.env.CUTLINE_SUPABASE_ORIGIN;
   try {
@@ -70,6 +73,17 @@ if (!app.requestSingleInstanceLock()) {
   let closeResolutionInProgress = false;
   let activeCloseRequestId = null;
   let closeRequestTimeout = null;
+  const richPresence = createRichPresenceController({
+    createClient: () => {
+      const RPC = require('discord-rpc');
+      return new RPC.Client({ transport: 'ipc' });
+    },
+    onStatus(status) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(RICH_PRESENCE_STATUS_CHANNEL, status);
+      }
+    },
+  });
 
   if (DEV_SERVER_URL) {
     const parsedDevUrl = new URL(DEV_SERVER_URL);
@@ -212,6 +226,12 @@ if (!app.requestSingleInstanceLock()) {
       minHeight: 640,
       autoHideMenuBar: true,
       backgroundColor: '#17191d',
+      icon: path.join(
+        __dirname,
+        '..',
+        'desktop-assets',
+        process.platform === 'win32' ? 'cutline-app-icon.ico' : 'cutline-app-icon-512.png',
+      ),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
@@ -316,6 +336,15 @@ if (!app.requestSingleInstanceLock()) {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     if (!ownerWindow) return false;
     return finishWindowClose(ownerWindow, result.requestId, result.saved);
+  });
+
+  ipcMain.handle(RICH_PRESENCE_UPDATE_CHANNEL, (event, payload) => {
+    if (!isTrustedIpcEvent(event)) return 'unavailable';
+    return richPresence.update(payload);
+  });
+
+  app.on('before-quit', () => {
+    richPresence.shutdown();
   });
 
   app.whenReady().then(() => {
