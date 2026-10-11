@@ -21,7 +21,7 @@ import TitleTemplatesPanel, { type TitleTemplate } from '@/components/TitleTempl
 import {
   createProjectRenderIndex, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, FILTER_PRESETS, getAudioFade, getClipDuration,
   getTextOverlayBounds, renderProjectFrame, restoreProjectSelection, type Asset, type AssetMetadata, type Clip, type ClipEffects,
-  getPreviewCanvasSize, removeAssetReferencesFromProject, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type ProjectSelection, type SavedProject, type TextOverlay, type TimelineFilterEffect, type Track, type TrackKind,
+  ensureProjectTimelineTracks, getPreviewCanvasSize, removeAssetReferencesFromProject, type ClipTransform, type ClipTransition, type MarkupDrawing, type MarkupTool, type Project, type ProjectFolder, type ProjectSelection, type SavedProject, type TextOverlay, type TimelineFilterEffect, type Track, type TrackKind,
 } from '@/lib/composition';
 import {
   getExportFrameCount,
@@ -80,10 +80,13 @@ type FileAccessWindow = Window & {
   showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<WritableDirectoryHandle>;
 };
 const DEFAULT_TRACKS: Track[] = [
-  { id: 'video-1', name: 'Clips', kind: 'video', order: 0, muted: false, visible: true, locked: false },
-  { id: 'audio-1', name: 'Audio 1', kind: 'audio', order: 1, muted: false, visible: true, locked: false },
-  { id: 'text-1', name: 'Text 1', kind: 'text', order: 2, muted: false, visible: true, locked: false },
+  { id: 'video-1', name: 'Video Track', kind: 'video', order: 0, muted: false, visible: true, locked: false },
+  { id: 'overlay-1', name: 'Clip Track', kind: 'overlay', order: 1, muted: false, visible: true, locked: false },
+  { id: 'audio-1', name: 'Audio Track', kind: 'audio', order: 2, muted: false, visible: true, locked: false },
+  { id: 'text-1', name: 'Text Track', kind: 'text', order: 3, muted: false, visible: true, locked: false },
 ];
+const isVideoTrackKind = (kind: TrackKind | undefined): kind is 'video' | 'overlay' =>
+  kind === 'video' || kind === 'overlay';
 const TRACK_LABEL_WIDTH = 198;
 const AUTOSAVE_DELAY_MS = 500;
 const CANVAS_ASPECTS = [
@@ -116,7 +119,7 @@ type ProjectSaveSnapshot = { project: Project; assets: Asset[]; selection: Proje
 type MarkupToolMode = MarkupTool | 'eraser';
 type ContextTarget = { kind: 'empty' | 'media' | 'project' | 'clip' | 'transition'; id?: string; x: number; y: number };
 type MediaImportKind = 'video' | 'audio';
-type TrackImportTarget = { trackId: string; kind: MediaImportKind };
+type TrackImportTarget = { trackId: string; kind: 'video' | 'overlay' | 'audio' };
 type ClipPatch = Omit<Partial<Clip>, 'transform' | 'effects' | 'text' | 'filterEffect'> & {
   transform?: Partial<ClipTransform>;
   effects?: Partial<ClipEffects>;
@@ -134,7 +137,7 @@ function constrainTimelineFilters(project: Project): Project {
     if (!clip.filterEffect) return [clip];
     const target = project.clips.find((item) => item.id === clip.filterEffect?.targetClipId);
     const targetTrack = target && project.tracks.find((track) => track.id === target.trackId);
-    if (!target || !targetTrack || targetTrack.kind !== 'video' || target.text || target.audioOnly) return [];
+    if (!target || !targetTrack || !isVideoTrackKind(targetTrack.kind) || target.text || target.audioOnly) return [];
     const start = Math.max(clip.timelineStart, target.timelineStart);
     const end = Math.min(clip.timelineStart + getClipDuration(clip), target.timelineStart + getClipDuration(target));
     if (end - start < .08) return [];
@@ -1097,22 +1100,26 @@ function Home() {
         if (rememberedProject) {
           const localAssets = await readLocalMedia(rememberedProject.project.id);
           if (!alive) return;
-          const selection = restoreProjectSelection(rememberedProject.project, localAssets, rememberedProject.selection);
-          projectRef.current = rememberedProject.project;
+          const restoredProject = ensureProjectTimelineTracks(rememberedProject.project);
+          const selection = restoreProjectSelection(restoredProject, localAssets, rememberedProject.selection);
+          projectRef.current = restoredProject;
           assetsRef.current = localAssets;
           selectionRef.current = selection;
           persistedSnapshot.current = {
-            project: rememberedProject.project,
+            project: restoredProject,
             assets: localAssets,
             selection,
           };
-          setProject(rememberedProject.project);
+          setProject(restoredProject);
           setAssets(localAssets);
           setSelectedClipId(selection.clipId);
           setSelectedAssetId(selection.assetId);
           setPlayhead(0);
           setHasActiveProject(true);
           setSaveState('saved');
+          if (restoredProject !== rememberedProject.project) {
+            await persistProjectSnapshot(restoredProject, localAssets, selection);
+          }
           restoredLastProject = true;
         } else if (rememberedProjectId) {
           clearRememberedProject(rememberedProjectId);
@@ -1128,7 +1135,7 @@ function Home() {
       }
     })();
     return () => { alive = false; };
-  }, [clearRememberedProject, notify]);
+  }, [clearRememberedProject, notify, persistProjectSnapshot]);
 
   useEffect(() => {
     if (!projectHydrated || !hasActiveProject) return;
@@ -1272,7 +1279,7 @@ function Home() {
   const previewBaseProject = useMemo(() => {
     const previous = previewBaseProjectRef.current;
     if (previous?.source === project) return previous.rendered;
-    const videoTracks = project.tracks.filter((track) => track.kind === 'video' || track.kind === 'effects');
+      const videoTracks = project.tracks.filter((track) => isVideoTrackKind(track.kind) || track.kind === 'effects');
     const videoTrackIds = new Set(videoTracks.map((track) => track.id));
     const videoClips = project.clips.filter((clip) => !clip.text && videoTrackIds.has(clip.trackId));
     const sameReferences = <T,>(left: T[], right: T[]) =>
@@ -1324,7 +1331,7 @@ function Home() {
   }, [selectedClipId, selectedClip]);
   const selectedTrack = selectedClip ? project.tracks.find((track) => track.id === selectedClip.trackId) : undefined;
   const selectedClipLocked = Boolean(selectedTrack?.locked);
-  const nextTransitionClip = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
+  const nextTransitionClip = selectedClip && isVideoTrackKind(selectedTrack?.kind) && !selectedClip.audioOnly && !selectedClip.text
     ? project.clips
       .filter((clip) => {
         const asset = assets.find((item) => item.id === clip.assetId);
@@ -1333,7 +1340,7 @@ function Home() {
       })
       .sort((a, b) => a.timelineStart - b.timelineStart)[0]
     : undefined;
-  const previousTransitionClip = selectedClip && selectedTrack?.kind === 'video' && !selectedClip.audioOnly && !selectedClip.text
+  const previousTransitionClip = selectedClip && isVideoTrackKind(selectedTrack?.kind) && !selectedClip.audioOnly && !selectedClip.text
     ? project.clips
       .filter((clip) => {
         const asset = assets.find((item) => item.id === clip.assetId);
@@ -1370,7 +1377,7 @@ function Home() {
   const orderedTracks = [...project.tracks].sort((a, b) => a.order - b.order);
   const activeVisualClips = useMemo(() => project.clips.filter((clip) => {
     const track = project.tracks.find((t) => t.id === clip.trackId);
-    return (track?.kind === 'video' || track?.kind === 'text') && track.visible !== false && playhead >= clip.timelineStart && playhead < clip.timelineStart + getClipDuration(clip);
+    return (isVideoTrackKind(track?.kind) || track?.kind === 'text') && track.visible !== false && playhead >= clip.timelineStart && playhead < clip.timelineStart + getClipDuration(clip);
   }).sort((a, b) => {
     const trackA = project.tracks.find((track) => track.id === a.trackId)?.order ?? 0;
     const trackB = project.tracks.find((track) => track.id === b.trackId)?.order ?? 0;
@@ -1381,11 +1388,11 @@ function Home() {
   const selectedAsset = selectedClip ? assets.find((asset) => asset.id === selectedClip.assetId) : null;
   const selectedAssetKind = selectedClip?.filterEffect ? 'effect' : selectedClip?.text ? 'text' : selectedAsset ? (selectedClip?.audioOnly || isAudio(selectedAsset)) ? 'audio' : isImage(selectedAsset) ? 'image' : 'video' : undefined;
   const selectedClipIsVideo = Boolean(
-    selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
+    selectedClip && isVideoTrackKind(selectedTrack?.kind) && !selectedClip.text && !selectedClip.audioOnly &&
     selectedAsset && isVideo(selectedAsset),
   );
   const selectedClipIsVisual = Boolean(
-    selectedClip && selectedTrack?.kind === 'video' && !selectedClip.text && !selectedClip.audioOnly &&
+    selectedClip && isVideoTrackKind(selectedTrack?.kind) && !selectedClip.text && !selectedClip.audioOnly &&
     selectedAsset && (isVideo(selectedAsset) || isImage(selectedAsset)),
   );
   const canApplySelectedTransition = Boolean(selectedClipIsVideo && !selectedClipLocked);
@@ -1400,7 +1407,7 @@ function Home() {
   const activeVideoClip = [...activeVisualClips].reverse().find((clip) => {
     const track = project.tracks.find((item) => item.id === clip.trackId);
     const asset = assets.find((item) => item.id === clip.assetId);
-    return track?.kind === 'video' && !clip.text && !clip.audioOnly && asset && isVideo(asset);
+    return isVideoTrackKind(track?.kind) && !clip.text && !clip.audioOnly && asset && isVideo(asset);
   }) || null;
   const filterTargetClip = selectedClipIsVideo ? selectedClip : activeVideoClip;
   const filterTargetTrack = filterTargetClip
@@ -1439,7 +1446,7 @@ function Home() {
     const asset = assets.find((item) => item.id === clip.assetId);
     return asset && (
       (track?.kind === 'audio' && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false))) ||
-      (track?.kind === 'video' && !clip.audioOnly && isVideo(asset) && asset.hasAudio !== false)
+      (isVideoTrackKind(track?.kind) && !clip.audioOnly && isVideo(asset) && asset.hasAudio !== false)
     );
   }), [project.clips, project.tracks, assets]);
 
@@ -1680,7 +1687,7 @@ function Home() {
         if (!(isVideoFile || isAudioFile || isImageFile)) {
           notify(`${file.name} is not a supported media file.`, true); continue;
         }
-        if (target && (target.kind === 'video' ? !isVideoFile : !isAudioFile)) {
+        if (target && (target.kind === 'video' ? !isVideoFile : target.kind === 'overlay' ? !(isVideoFile || isImageFile) : !isAudioFile)) {
           notify(`${file.name} is not a supported ${target.kind} file for this track.`, true);
           continue;
         }
@@ -1749,7 +1756,7 @@ function Home() {
               setSelectedClipId(inserted[0].id);
               setSelectedAssetId(additions[0].id);
               setPlayhead(inserted[0].timelineStart);
-              notify(`${additions.length} ${target.kind === 'video' ? 'video clip' : 'audio'} file${additions.length === 1 ? '' : 's'} added to ${destination.name} without overlapping existing clips.`);
+              notify(`${additions.length} ${target.kind === 'audio' ? 'audio' : 'video or image'} file${additions.length === 1 ? '' : 's'} added to ${destination.name} without overlapping existing clips.`);
             }
           }
         } else {
@@ -1766,11 +1773,11 @@ function Home() {
     }
     return importComplete;
   }, [commit, notify, playhead]);
-  const chooseMediaFiles = async (kind?: MediaImportKind, trackId?: string) => {
+  const chooseMediaFiles = async (kind?: MediaImportKind, trackId?: string, trackKind?: TrackImportTarget['kind']) => {
     const desktop = window.cutlineDesktop;
     if (!desktop) {
       if (kind && trackId) {
-        trackImportTarget.current = { kind, trackId };
+        trackImportTarget.current = { kind: trackKind || kind, trackId };
         (kind === 'video' ? trackVideoInput : trackAudioInput).current?.click();
       } else fileInput.current?.click();
       return;
@@ -1792,7 +1799,7 @@ function Home() {
         }
         importedFiles.push(new File([blob], selected.name, { type: selected.mimeType }));
       }
-      await importFiles(importedFiles, kind && trackId ? { kind, trackId } : undefined);
+      await importFiles(importedFiles, kind && trackId ? { kind: trackKind || kind, trackId } : undefined);
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not import the selected media files.', true);
     } finally {
@@ -1849,7 +1856,7 @@ function Home() {
   const addAssetToTimeline = useCallback((asset: Asset, trackId?: string, at = playhead, asAudio = false) => {
     const requestedTrack = trackId ? projectRef.current.tracks.find((track) => track.id === trackId) : undefined;
     const audioOnlySource = isVideo(asset) && (asAudio || requestedTrack?.kind === 'audio');
-    const kind: TrackKind = isAudio(asset) || audioOnlySource ? 'audio' : 'video';
+    const kind: TrackKind = isAudio(asset) || audioOnlySource ? 'audio' : requestedTrack?.kind === 'overlay' ? 'overlay' : 'video';
     let target = requestedTrack || projectRef.current.tracks.find((track) => track.kind === kind);
     if (!target) {
       const track: Track = { id: uid(), name: `${kind === 'video' ? 'Video' : 'Audio'} ${projectRef.current.tracks.filter((t) => t.kind === kind).length + 1}`, kind, order: projectRef.current.tracks.length, muted: false, visible: true, locked: false };
@@ -1858,7 +1865,7 @@ function Home() {
     }
     if (target.locked) { notify('Unlock that track before adding media.', true); return; }
     if (audioOnlySource && asset.hasAudio === false) { notify('This video has no embedded audio track to add to Audio.', true); return; }
-    if (target.kind !== kind) {
+    if (target.kind !== kind && !(isVideoTrackKind(target.kind) && isVideoTrackKind(kind))) {
       notify(`That file belongs on an ${kind} track.`, true); return;
     }
     const duration = Math.max(.15, asset.duration || 5);
@@ -2144,22 +2151,32 @@ function Home() {
     }
     trimDrag.current = null;
   };
-  const addTrack = (kind: TrackKind) => commit((current) => ({
-    ...current,
-    tracks: [...current.tracks, { id: uid(), kind, name: `${kind === 'video' && current.tracks.filter((t) => t.kind === kind).length === 0 ? 'Clips' : kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'}${kind === 'video' && current.tracks.filter((t) => t.kind === kind).length === 0 ? '' : ` ${current.tracks.filter((t) => t.kind === kind).length + 1}`}`, order: current.tracks.length, muted: false, visible: true, locked: false }],
-  }));
+  const addTrack = (kind: TrackKind) => commit((current) => {
+    const count = current.tracks.filter((track) => track.kind === kind).length;
+    const label = kind === 'video' ? 'Video' : kind === 'overlay' ? 'Clip' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text';
+    const name = kind === 'video' && count === 0 ? 'Video Track'
+      : kind === 'overlay' && count === 0 ? 'Clip Track'
+        : `${label} Track ${count + 1}`;
+    return {
+      ...current,
+      tracks: [...current.tracks, { id: uid(), kind, name, order: current.tracks.length, muted: false, visible: true, locked: false }],
+    };
+  });
   const moveClip = (clipId: string, nextStart: number, targetTrackId?: string) => {
     const movingClip = projectRef.current.clips.find((clip) => clip.id === clipId);
     const targetTrack = targetTrackId ? projectRef.current.tracks.find((track) => track.id === targetTrackId) : undefined;
     const asset = movingClip ? assets.find((item) => item.id === movingClip.assetId) : undefined;
     if (!movingClip || (targetTrackId && !targetTrack)) return;
     const sourceTrack = projectRef.current.tracks.find((track) => track.id === movingClip.trackId);
-    const clipKind: TrackKind = movingClip.filterEffect ? 'effects' : movingClip.text ? 'text' : movingClip.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
+    const clipKind: TrackKind = movingClip.filterEffect ? 'effects' : movingClip.text ? 'text' :
+      movingClip.audioOnly || (asset && isAudio(asset)) ? 'audio' :
+        sourceTrack?.kind === 'overlay' ? 'overlay' : 'video';
     if (sourceTrack?.locked || targetTrack?.locked) {
       notify('Unlock the track before moving clips.', true);
       return;
     }
-    if (targetTrack && targetTrack.kind !== clipKind) {
+    if (targetTrack && targetTrack.kind !== clipKind &&
+      !(isVideoTrackKind(targetTrack.kind) && isVideoTrackKind(clipKind))) {
       notify(`This ${clipKind} clip must stay on a matching track.`, true);
       return;
     }
@@ -2214,7 +2231,9 @@ function Home() {
     const source = clipboardClip.current;
     if (!source) return;
     const asset = assets.find((item) => item.id === source.assetId);
-    const kind: TrackKind = source.filterEffect ? 'effects' : source.text ? 'text' : source.audioOnly || (asset && isAudio(asset)) ? 'audio' : 'video';
+    const sourceTrack = projectRef.current.tracks.find((item) => item.id === source.trackId);
+    const kind: TrackKind = source.filterEffect ? 'effects' : source.text ? 'text' :
+      source.audioOnly || (asset && isAudio(asset)) ? 'audio' : sourceTrack?.kind === 'overlay' ? 'overlay' : 'video';
     let track = projectRef.current.tracks.find((item) => item.kind === kind && !item.locked);
     if (!track) {
       track = { id: uid(), kind, name: `${kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'effects' ? 'Effects' : 'Text'} ${projectRef.current.tracks.filter((item) => item.kind === kind).length + 1}`, order: projectRef.current.tracks.length, muted: false, visible: true, locked: false };
@@ -2245,6 +2264,14 @@ function Home() {
     return { ...current, tracks: sorted.map((track, order) => ({ ...track, order })) };
   });
   const deleteTrack = (track: Track) => {
+    if (track.kind === 'video' && projectRef.current.tracks.filter((item) => item.kind === 'video').length === 1) {
+      notify('The base Video Track is required. Add another video track before removing this one.', true);
+      return;
+    }
+    if (track.kind === 'overlay' && projectRef.current.tracks.filter((item) => item.kind === 'overlay').length === 1) {
+      notify('Keep at least one Clip Track for video overlays.', true);
+      return;
+    }
     const count = projectRef.current.clips.filter((clip) => clip.trackId === track.id).length;
     const removedClipIds = new Set(projectRef.current.clips.filter((clip) => clip.trackId === track.id).map((clip) => clip.id));
     if (!window.confirm(`Delete ${track.name} and ${count} clip${count === 1 ? '' : 's'} on it? This can be undone.`)) return;
@@ -2339,7 +2366,7 @@ function Home() {
     const isTransitionableClip = (clip: Clip | undefined) => {
       const track = clip && project.tracks.find((item) => item.id === clip.trackId);
       const asset = clip?.assetId && assets.find((item) => item.id === clip.assetId);
-      return Boolean(clip && track?.kind === 'video' && !track.locked && !clip.text && !clip.audioOnly && asset && isVideo(asset));
+      return Boolean(clip && isVideoTrackKind(track?.kind) && !track.locked && !clip.text && !clip.audioOnly && asset && isVideo(asset));
     };
 
     let fromClip: Clip | undefined;
@@ -2431,7 +2458,7 @@ function Home() {
   const moveTransitionToTrackTime = (transitionId: string, targetTrackId: string, at: number) => {
     const moving = projectRef.current.transitions?.find((item) => item.id === transitionId);
     const track = projectRef.current.tracks.find((item) => item.id === targetTrackId);
-    if (!moving || !track || track.kind !== 'video' || track.locked) {
+    if (!moving || !track || !isVideoTrackKind(track.kind) || track.locked) {
       notify('Drop transitions onto an unlocked video track.', true);
       return;
     }
@@ -2495,7 +2522,7 @@ function Home() {
     const mode = getTransitionMode(source);
     const trackClips = project.clips.filter((clip) => {
       const asset = clip.assetId ? assets.find((item) => item.id === clip.assetId) : undefined;
-      return project.tracks.find((item) => item.id === clip.trackId)?.kind === 'video' && !clip.text && !clip.audioOnly && asset && isVideo(asset);
+      return isVideoTrackKind(project.tracks.find((item) => item.id === clip.trackId)?.kind) && !clip.text && !clip.audioOnly && asset && isVideo(asset);
     }).sort((a, b) => a.timelineStart - b.timelineStart);
     let duplicate: ClipTransition | null = null;
     if (mode === 'between') {
@@ -2775,18 +2802,22 @@ function Home() {
       const records = await readLocalProjects();
       const latestRecord = records.find((item) => item.project.id === record.project.id) || record;
       const localAssets = await readLocalMedia(latestRecord.project.id);
-      setSavedProjects(records);
+      const openedProject = ensureProjectTimelineTracks(latestRecord.project);
       history.current = []; future.current = [];
-      projectRef.current = latestRecord.project;
+      projectRef.current = openedProject;
       assetsRef.current = localAssets;
-      setProject(latestRecord.project); setAssets(localAssets);
-      const selection = restoreProjectSelection(latestRecord.project, localAssets, latestRecord.selection);
+      setProject(openedProject); setAssets(localAssets);
+      const selection = restoreProjectSelection(openedProject, localAssets, latestRecord.selection);
       selectionRef.current = selection;
-      persistedSnapshot.current = { project: latestRecord.project, assets: localAssets, selection };
+      persistedSnapshot.current = { project: openedProject, assets: localAssets, selection };
+      if (openedProject !== latestRecord.project) {
+        await persistProjectSnapshot(openedProject, localAssets, selection);
+      }
+      setSavedProjects(await readLocalProjects());
       setSelectedClipId(selection.clipId); setSelectedAssetId(selection.assetId); setPlayhead(0);
       setHasActiveProject(true); setSaveState('saved'); setDialog(null);
-      rememberActiveProject(latestRecord.project.id);
-      notify(`Opened “${latestRecord.project.name}” from local storage.`);
+      rememberActiveProject(openedProject.id);
+      notify(`Opened “${openedProject.name}” from local storage.`);
       return true;
     } catch {
       notify('Could not save the current project or load the selected project. The current project is still open.', true);
@@ -3007,8 +3038,11 @@ function Home() {
     setDialog('project');
   };
   const beginNewProjectWithMedia = () => {
-    beginNewProject();
+  setDraftProjectName(nextProjectName(savedProjects));
+  setDraftProjectFolderId('unorganized');
+  setCreatingProject(true);
     setImportMediaAfterCreation(true);
+  setDialog('project');
   };
   const createProjectFromForm = async () => {
     const name = draftProjectName.trim();
@@ -3794,7 +3828,7 @@ function Home() {
         const track = renderIndex.tracksById.get(clip.trackId);
         const sourceHasAudio = Boolean(asset && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false)));
         return Boolean(asset && track && !clip.muted && !track.muted && sourceHasAudio &&
-          (track.kind === 'audio' || (track.kind === 'video' && !clip.audioOnly)));
+          (track.kind === 'audio' || (isVideoTrackKind(track.kind) && !clip.audioOnly)));
       });
       if (clipsWithAudio.length) {
         audioContext = new AudioContext();
@@ -3805,7 +3839,7 @@ function Home() {
           const track = renderIndex.tracksById.get(clip.trackId);
           const sourceHasAudio = Boolean(asset && (isAudio(asset) || (isVideo(asset) && asset.hasAudio !== false)));
           if (!asset || !track || clip.muted || track.muted || !sourceHasAudio ||
-            (track.kind !== 'audio' && (track.kind !== 'video' || clip.audioOnly))) continue;
+            (track.kind !== 'audio' && (!isVideoTrackKind(track.kind) || clip.audioOnly))) continue;
           const media = document.createElement('audio');
           media.preload = 'metadata';
           media.playbackRate = clip.speed;
@@ -3955,7 +3989,12 @@ function Home() {
         saveMethod: outputDirectory ? 'computer-folder' as const : fileHandle ? 'save-picker' as const : 'browser-download' as const,
         ...(outputDirectory ? { computerFolderName: outputDirectory.name } : {}),
       };
-      const updatedProject: Project = { ...currentProject, exports: [...(currentProject.exports || []), exportRecord] };
+      const updatedProject: Project = {
+        ...currentProject,
+        folderId: exportRecord.folderId,
+        exports: [...(currentProject.exports || []), exportRecord],
+      };
+      projectRef.current = updatedProject;
       setProject(updatedProject);
       try {
         await persistProjectSnapshot(updatedProject, assetsRef.current);
@@ -3966,7 +4005,7 @@ function Home() {
       const destination = exportFolderId === 'unorganized'
         ? 'Unorganized Projects'
         : projectFolders.find((folder) => folder.id === exportFolderId)?.name || 'the selected internal folder';
-      notify(`${outputMessage}. Recorded under “${destination}” in Cutline. The Cutline folder organizes project history and does not move the project.`);
+      notify(`${outputMessage}. This project is now organized under “${destination}” in Cutline. The rendered file remains at the selected export location.`);
       setDialog(null);
     } catch (error) {
       if (exportCancelRequested.current && error instanceof DOMException && error.name === 'AbortError') {
@@ -4013,7 +4052,9 @@ function Home() {
   const visibleSavedProjects = useMemo(() => {
     const query = projectSearch.trim().toLowerCase();
     return savedProjects
-      .filter((record) => record.project.name.toLowerCase().includes(query))
+      .filter((record) => !query ||
+        record.project.name.toLowerCase().includes(query) ||
+        (projectFolders.find((folder) => folder.id === record.project.folderId)?.name || '').toLowerCase().includes(query))
       .filter((record) => selectedProjectFolder === 'all'
         ? true
         : selectedProjectFolder === 'unorganized'
@@ -4022,7 +4063,7 @@ function Home() {
       .sort((a, b) => projectSort === 'name'
         ? a.project.name.localeCompare(b.project.name)
         : b.savedAt - a.savedAt);
-  }, [savedProjects, projectSearch, projectSort, selectedProjectFolder]);
+  }, [savedProjects, projectFolders, projectSearch, projectSort, selectedProjectFolder]);
   const missingProjectAssets = useMemo(() => {
     const currentRecord = savedProjects.find((record) => record.project.id === project.id);
     const metadataById = new Map((currentRecord?.assets || []).map((asset) => [asset.id, asset]));
@@ -4045,7 +4086,10 @@ function Home() {
     ...projectFolders.map((folder) => ({ value: folder.id, label: folder.name })),
   ];
   const projectDestinationOptions = [
-    ...(!savedProjects.some((record) => record.project.id === project.id)
+    ...(!hasActiveProject && savedProjects.length > 0
+      ? [{ value: '', label: 'Choose a saved project…' }]
+      : []),
+    ...(hasActiveProject && !savedProjects.some((record) => record.project.id === project.id)
       ? [{ value: project.id, label: `${project.name} (Active project)` }]
       : []),
     ...savedProjects.map((record) => ({
@@ -4192,7 +4236,7 @@ function Home() {
          else if (event.dataTransfer.files.length) {
            if (project.clips.length === 0 && assets.length === 0) {
              setPendingDroppedFiles(Array.from(event.dataTransfer.files));
-             setDropProjectId(projectRef.current.id);
+             setDropProjectId(hasActiveProject ? projectRef.current.id : '');
              void openProjects();
            } else void importFiles(event.dataTransfer.files);
          }
@@ -4202,8 +4246,8 @@ function Home() {
         hidden
         type="file"
         multiple
-        accept="video/*,.avi,.m4v,.mkv"
-        aria-label="Choose video clips for the Clips track"
+        accept="video/*,image/*,.avi,.m4v,.mkv"
+        aria-label="Choose video or image clips for a timeline track"
         onChange={(event) => {
           const target = trackImportTarget.current;
           trackImportTarget.current = null;
@@ -4313,7 +4357,16 @@ function Home() {
             <div className="asset-tools">
               <label className="search-box"><Search size={13} /><input aria-label={`Search ${libraryWorkspace}`} data-testid="input-search-media" placeholder="Find media…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
               <button className="icon-btn active" title="Import local media" aria-label="Import local media" disabled={mediaImporting} onClick={() => void chooseMediaFiles()} data-testid="button-import"><Plus size={17} /></button>
-              <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => { if (event.target.files) void importFiles(event.target.files); event.target.value = ''; }} data-testid="input-media-files" />
+              <input ref={fileInput} hidden type="file" multiple accept="video/*,audio/*,image/*,.mkv,.avi,.flac" onChange={(event) => {
+                const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+                if (files.length && !hasActiveProject) {
+                  setPendingDroppedFiles(files);
+                  setDropProjectId('');
+                  setCreatingProject(false);
+                  setDialog('project');
+                } else if (files.length) void importFiles(files);
+                event.currentTarget.value = '';
+              }} data-testid="input-media-files" />
               <input
                 ref={relinkFileInput}
                 hidden
@@ -4426,6 +4479,7 @@ function Home() {
         <section className="stage">
           <div className="stage-tools">
           <button className="icon-btn" title="Add video track" onClick={() => addTrack('video')} data-testid="button-add-video-track"><Layers2 size={15} /></button>
+          <button className="icon-btn" title="Add overlay Clip Track" onClick={() => addTrack('overlay')} data-testid="button-add-overlay-track"><Film size={15} /></button>
           <button className="icon-btn" title="Add audio track" onClick={() => addTrack('audio')} data-testid="button-add-audio-track"><AudioLines size={15} /></button>
           <button className="icon-btn" title="Add text track" onClick={() => addTrack('text')} data-testid="button-add-text-track"><Type size={15} /></button>
             <span className="divider" />
@@ -4514,13 +4568,13 @@ function Home() {
                   setDropActive(false);
                   if (event.dataTransfer.files.length) {
                     setPendingDroppedFiles(Array.from(event.dataTransfer.files));
-                    setDropProjectId(projectRef.current.id);
+                    setDropProjectId(hasActiveProject ? projectRef.current.id : '');
                     setDialog('project');
                   }
                 }}
               >
                 <span className="project-welcome__icon"><Clapperboard size={24} /></span>
-                <h3>Drop your first clip here</h3>
+                <h3>{!hasActiveProject && savedProjects.length === 0 ? 'Drop your first project' : 'Drop clips here'}</h3>
                 <p>{project.width / project.height <= 0.8
                   ? 'Add media, then add it to your timeline.'
                   : 'Drop media here to choose a project destination. Open a saved project to continue its timeline, or create a new one.'}</p>
@@ -4590,19 +4644,19 @@ function Home() {
             {orderedTracks.map((track) => (
               <div className="track-row" key={track.id}>
                 <div className="track-meta">
-                   {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : track.kind === 'effects' ? <WandSparkles size={13} color="#e9ad4e" /> : <Type size={13} color="#e6b84f" />}
+              {track.kind === 'video' ? <Film size={13} color="#74bac0" /> : track.kind === 'overlay' ? <Layers2 size={13} color="#8bd1b4" /> : track.kind === 'audio' ? <AudioLines size={13} color="#b4a0e1" /> : track.kind === 'effects' ? <WandSparkles size={13} color="#e9ad4e" /> : <Type size={13} color="#e6b84f" />}
                   <span className="track-name">{track.name}</span>
-                  {(track.kind === 'video' || track.kind === 'audio') && <button
+              {(isVideoTrackKind(track.kind) || track.kind === 'audio') && <button
                     className="icon-btn track-upload-control"
                     type="button"
-                    title={track.kind === 'video' ? 'Add video clips to this track' : 'Add audio to this track'}
-                    aria-label={track.kind === 'video' ? `Add video clips to ${track.name}` : `Add audio to ${track.name}`}
+                title={track.kind === 'audio' ? 'Add audio to this track' : track.kind === 'overlay' ? 'Add overlay clips to this track' : 'Add video clips to this track'}
+                aria-label={track.kind === 'audio' ? `Add audio to ${track.name}` : track.kind === 'overlay' ? `Add video or image overlays to ${track.name}` : `Add video clips to ${track.name}`}
                     disabled={track.locked || mediaImporting}
-                    onClick={() => void chooseMediaFiles(track.kind === 'video' ? 'video' : 'audio', track.id)}
+                onClick={() => void chooseMediaFiles(track.kind === 'audio' ? 'audio' : 'video', track.id, track.kind as TrackImportTarget['kind'])}
                     data-testid={`button-upload-track-${track.id}`}
                   ><Plus size={12} /></button>}
                   {track.kind !== 'audio' && <button className={`icon-btn ${track.visible === false ? 'active' : ''}`} title={track.visible === false ? 'Show track' : 'Hide track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, visible: t.visible === false } : t) }))} data-testid={`button-visibility-track-${track.id}`}>{track.visible === false ? <EyeOff size={12} /> : <Eye size={12} />}</button>}
-                   {(track.kind === 'audio' || track.kind === 'video') && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
+              {(track.kind === 'audio' || isVideoTrackKind(track.kind)) && <button className={`icon-btn ${track.muted ? 'active' : ''}`} title={track.muted ? 'Unmute track' : 'Mute track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, muted: !t.muted } : t) }))} data-testid={`button-mute-track-${track.id}`}>{track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}
                   <button className={`icon-btn ${track.locked ? 'active' : ''}`} title={track.locked ? 'Unlock track' : 'Lock track'} onClick={() => commit((current) => ({ ...current, tracks: current.tracks.map((t) => t.id === track.id ? { ...t, locked: !t.locked } : t) }))} data-testid={`button-lock-track-${track.id}`}>{track.locked ? <LockKeyhole size={11} /> : <UnlockKeyhole size={11} />}</button>
                   <button className="icon-btn track-order-control" title="Move track up" aria-label={`Move ${track.name} up`} disabled={track.order === 0} onClick={() => reorderTrack(track.id, -1)} data-testid={`button-track-up-${track.id}`}><ArrowUp size={11} /></button>
                   <button className="icon-btn track-order-control" title="Move track down" aria-label={`Move ${track.name} down`} disabled={track.order === orderedTracks.length - 1} onClick={() => reorderTrack(track.id, 1)} data-testid={`button-track-down-${track.id}`}><ArrowDown size={11} /></button>
@@ -4621,7 +4675,7 @@ function Home() {
                   else if (clipId) moveClip(clipId, point.time - Number(event.dataTransfer.getData('application/x-cutline-offset')), track.id);
                   else { const asset = assets.find((item) => item.id === assetId); if (asset) addAssetToTimeline(asset, track.id, point.time); }
             if (!transitionId && !clipId && !assetId && event.dataTransfer.files.length) {
-              if (track.kind === 'video' || track.kind === 'audio') void importFiles(event.dataTransfer.files, { trackId: track.id, kind: track.kind });
+              if (isVideoTrackKind(track.kind) || track.kind === 'audio') void importFiles(event.dataTransfer.files, { trackId: track.id, kind: track.kind });
               else void importFiles(event.dataTransfer.files);
             }
                 }} onClick={(event) => {
@@ -4708,7 +4762,7 @@ function Home() {
                 </div>
               </div>
             ))}
-            {Boolean(project.transitions?.length) && <div className="track-row track-row--transitions" data-testid="track-transitions">
+            <div className="track-row track-row--transitions" data-testid="track-transitions">
               <div className="track-meta">
                 <Sparkles size={13} color="#e6c56b" />
                 <span className="track-name">Transitions</span>
@@ -4788,7 +4842,7 @@ function Home() {
                 })}
                 <div className="playhead" style={{ left: playhead * scale }} />
               </div>
-            </div>}
+            </div>
             {orderedTracks.length === 0 && <div className="drop-hint">Add a track to get started</div>}
           </div>
         </div>
@@ -4850,12 +4904,16 @@ function Home() {
           {pendingDroppedFiles.length > 0 && <div className="project-library__drop-choice">
             <strong>{pendingDroppedFiles.length} dropped file{pendingDroppedFiles.length === 1 ? '' : 's'} waiting for a project</strong>
             <p>Nothing has been imported yet. Choose a destination or create a new project; these files will stay queued until you decide.</p>
-            <label>Import into<CutlineSelect aria-label="Choose project for dropped files" value={dropProjectId || project.id} options={projectDestinationOptions} onValueChange={setDropProjectId} data-testid="select-drop-project-destination" /></label>
+            {(hasActiveProject || savedProjects.length > 0) && <label>Import into<CutlineSelect aria-label="Choose project for dropped files" value={dropProjectId || (hasActiveProject ? project.id : '')} options={projectDestinationOptions} onValueChange={setDropProjectId} data-testid="select-drop-project-destination" /></label>}
             <div>
-              <button className="btn" type="button" onClick={beginNewProject}><FilePlus2 size={13} />Create project</button>
+              <button className="btn" type="button" onClick={beginNewProjectWithMedia}><FilePlus2 size={13} />Create project and import</button>
               <button className="btn" type="button" onClick={() => setPendingDroppedFiles([])}>Discard queued files</button>
-              <button className="btn primary" type="button" disabled={mediaImporting} onClick={async () => {
-                const targetId = dropProjectId || project.id;
+              <button className="btn primary" type="button" disabled={mediaImporting || (!hasActiveProject && !dropProjectId)} onClick={async () => {
+                const targetId = dropProjectId || (hasActiveProject ? project.id : '');
+                if (!targetId) {
+                  notify('Choose a saved project or create a new project before importing these files.', true);
+                  return;
+                }
                 const targetRecord = savedProjects.find((record) => record.project.id === targetId);
                 if (targetId !== projectRef.current.id) {
                   if (!targetRecord || !await openProject(targetRecord)) return;
@@ -4880,9 +4938,15 @@ function Home() {
           <div className="project-library__folder-strip" aria-label="Project folders">
             <button type="button" className={selectedProjectFolder === 'all' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('all')}><FolderOpen size={13} />All projects <span>{savedProjects.length}</span></button>
             <button type="button" className={selectedProjectFolder === 'unorganized' ? 'is-selected' : ''} onClick={() => setSelectedProjectFolder('unorganized')}><Folder size={13} />Unorganized <span>{savedProjects.filter((record) => !record.project.folderId).length}</span></button>
-            {projectFolders.map((folder) => {
+            {projectFolders.filter((folder) => {
+              const query = projectSearch.trim().toLowerCase();
+              return !query || folder.name.toLowerCase().includes(query) ||
+                savedProjects.some((record) => record.project.folderId === folder.id && record.project.name.toLowerCase().includes(query));
+            }).map((folder) => {
+              const query = projectSearch.trim().toLowerCase();
               const folderProjects = savedProjects
                 .filter((record) => record.project.folderId === folder.id)
+                .filter((record) => !query || folder.name.toLowerCase().includes(query) || record.project.name.toLowerCase().includes(query))
                 .sort((a, b) => b.savedAt - a.savedAt);
               const expanded = expandedProjectFolders.has(folder.id);
               return <div className={`project-library__folder-chip${selectedProjectFolder === folder.id ? ' is-selected' : ''}${expanded ? ' has-expanded' : ''}`} key={folder.id}>
@@ -4907,22 +4971,37 @@ function Home() {
                   <button type="button" className="project-library__folder-action is-delete" title={`Delete ${folder.name}`} aria-label={`Delete folder ${folder.name}`} onClick={() => void deleteProjectFolder(folder)}><Trash2 size={12} /></button>
                 </div>
                 {expanded && <div className="project-library__folder-projects" role="list" aria-label={`${folder.name} projects`}>
-                  {folderProjects.length ? folderProjects.map((record) => <div role="listitem" key={record.project.id}>
+                  {folderProjects.length ? folderProjects.map((record) => {
+                    const firstClip = record.project.clips.find((clip) => clip.assetId);
+                    const thumbnail = record.assets.find((asset) => asset.id === firstClip?.assetId)?.thumbnail;
+                    const contentEnd = record.project.clips.reduce(
+                      (end, clip) => Math.max(end, clip.timelineStart + getClipDuration(clip)),
+                      0,
+                    );
+                    const latestExport = [...(record.project.exports || [])].sort((a, b) => b.exportedAt - a.exportedAt)[0];
+                    return <div role="listitem" key={record.project.id}>
                     <button
                       type="button"
+                      className="project-library__folder-project"
                       onClick={() => void openProject(record)}
                       data-testid={`button-open-folder-project-${record.project.id}`}
                     >
-                      <span>{record.project.name}</span>
-                      <small>{new Date(record.savedAt).toLocaleDateString()} · {record.project.clips.length} clips</small>
+                      <span className="project-library__folder-project-thumb">{thumbnail ? <img src={thumbnail} alt="" /> : <Clapperboard size={14} />}</span>
+                      <span className="project-library__folder-project-copy">
+                        <strong>{record.project.name}</strong>
+                        <small>{record.project.width} × {record.project.height} · {record.project.frameRate} fps · {record.project.clips.length} clips · {formatTime(contentEnd)}</small>
+                        <small>{new Date(record.savedAt).toLocaleDateString()}{latestExport ? ` · Last export: ${latestExport.filename}` : ''}</small>
+                      </span>
+                      <span aria-hidden="true">›</span>
                     </button>
-                  </div>) : <span className="project-library__folder-empty">No projects in this folder yet.</span>}
+                  </div>;
+                  }) : <span className="project-library__folder-empty">No projects in this folder yet.</span>}
                 </div>}
               </div>;
             })}
           </div>
           <div className="project-library__tools">
-            <label className="search-box"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>
+            <label className="search-box"><Search size={13} /><input aria-label="Search projects and folders" placeholder="Find a project or folder…" value={projectSearch} onChange={(event) => setProjectSearch(event.currentTarget.value)} data-testid="input-search-projects" /></label>
             <label className="project-library__sort">
               <span>Sort</span>
               <CutlineSelect
@@ -4984,7 +5063,7 @@ function Home() {
                   <button type="button" title="Delete project" aria-label={`Delete ${currentProject.name}`} onClick={() => void deleteSavedProject(record)}><Trash2 size={13} /></button>
                 </div>
               </article>;
-            }) : <div className="project-library__empty">{savedProjects.length ? projectSearch ? 'No projects match your search.' : 'No projects in this folder yet.' : 'No saved projects yet. Create one or import a project backup.'}</div>}
+            }) : <div className="project-library__empty">{savedProjects.length ? projectSearch ? 'No projects match your search.' : 'No projects in this folder yet.' : 'Drop your first project here, or create one to get started.'}</div>}
           </div>
           {movingProjectId && <div className="project-library__move-form">
             <label>Move “{savedProjects.find((record) => record.project.id === movingProjectId)?.project.name || 'project'}” to<CutlineSelect aria-label="Move project to folder" value={moveFolderId} options={projectFolderOptions} onValueChange={setMoveFolderId} data-testid="select-move-project-folder" /></label>

@@ -1,0 +1,267 @@
+# CUTLINE VIDEO EDITOR — COMPLETE TIMELINE, TRANSITIONS & MEDIA PROJECT LIBRARY UPGRADE
+
+Update the existing Cutline video editor project. Modify the current implementation instead of creating a new project or replacing working features.
+
+Before coding, inspect the existing Media section, project storage, timeline and clip data models, preview renderer, transition system, export pipeline, and project save/load behavior. Identify existing bugs and reuse the current architecture wherever possible.
+
+**Critical requirements:**
+- Do not remove or replace the original Video Track.
+- Add a separate Clip Track for overlay clips.
+- Build a working folder-based project library in the Media section.
+- Implement real transitions that work in preview and export.
+- Preserve all existing functionality, project data, authentication, branding, and export options.
+- Do not mark features complete unless they have been implemented and tested.
+
+## 1. MEDIA SECTION — FOLDER-BASED PROJECT LIBRARY
+
+Redesign the Media section to organize saved editable projects into user-created folders.
+
+### Initial empty state
+- On first launch, when there are no saved projects, display “Drop your first project”.
+- Provide an obvious way to import a video and start editing.
+- Once media is imported, open a usable editing session.
+
+### Folder and export workflow
+When the user exports a project:
+
+1. Allow the user to select an existing project folder or create a new folder.
+2. If creating a folder, ask for its name.
+3. Save the editable project inside the selected folder's project library.
+4. Save the exported video in the appropriate folder or associated export location.
+5. After a successful save/export, update the Media section automatically.
+6. Prevent duplicate folder creation when exporting an existing project again.
+7. If the user is editing a saved project, default to its current folder while allowing another destination to be selected.
+8. If the user is editing a newly imported clip, do not silently assign it to an unrelated folder.
+
+**Folder limit:** Allow a maximum of 10 folders. If the limit is reached, disable new-folder creation and explain that the user must select an existing folder or remove one first. Each folder may contain any number of projects, subject to available storage.
+
+### Expandable folders
+- Display each folder as a clear, expandable/collapsible row or card.
+- Clicking a folder expands it downward to reveal all saved projects inside.
+- Clicking again collapses it.
+- Display the folder name and project count.
+- Each project entry should show a thumbnail, project name, duration, and last-modified date when available.
+- Selecting a project must reopen its complete editable timeline.
+- Add appropriate rename and delete actions.
+- Require confirmation before destructive operations. Deleting a folder must clearly explain what happens to its projects and files.
+- Preserve folder/project relationships after restarting the application.
+
+### Find Media search and plus button
+The Media section must include a working “Find Media” search bar and a plus (+) button.
+
+**Search:**
+- Search folders and saved projects by name.
+- Filter results as the user types.
+- Keep matching projects visible inside their parent folders.
+- Provide a clear-search control and an empty-results message.
+
+**Plus button:**
+- Open the native file picker to import a separate media clip.
+- Start a separate editing session if no saved project is selected.
+- Do not immediately create a project folder merely because the user imported media.
+- Let the user edit the clip and choose a folder during saving/export.
+- After a successful export, save the project in the selected folder and show it in the Media section.
+
+Importing new media must not overwrite or replace an existing saved project.
+
+## 2. PROJECT STORAGE, SAVING AND REOPENING
+
+Exporting an MP4 alone is not sufficient. Save the editable project data too.
+
+Each saved project must retain:
+- Unique project ID and project name
+- Parent folder ID
+- Source media references
+- Timeline tracks and assignments
+- Clip positions, start times, and durations
+- Overlay and compositing settings
+- Text/title overlays
+- Transitions, durations, and settings
+- Project settings and applicable export preferences
+- Creation and last-modified timestamps
+- Exported file references when available
+
+Use the existing persistence architecture if reliable. Otherwise implement a suitable local project database or structured project files.
+
+Do not rely only on temporary React state or filenames to reconstruct a project.
+
+Use the existing autosave/save functionality consistently. Reopening a saved project must restore the editable timeline without losing clips, transitions, titles, or settings.
+
+Re-exporting a project should update its existing project entry rather than create a duplicate entry or folder.
+
+Failed saves or exports must not create misleading success entries.
+
+## 3. RESTORE AND SEPARATE TIMELINE TRACKS
+
+Maintain separate, persistent tracks with clear labels:
+
+1. **Video Track:** Main/base video.
+2. **Clip Track:** Additional video clips that overlay the base video.
+3. **Audio Track:** Audio clips, where supported.
+4. **Text/Title Track:** Text and title overlays.
+5. **Transition Track:** Visible transition regions linked to clips or supported boundaries.
+
+The Video Track and Clip Track are different tracks with different purposes. Adding or modifying the Clip Track must never remove, replace, or disable the original Video Track.
+
+Preserve the existing timeline controls and project compatibility wherever possible.
+
+## 4. CLIP TRACK OVERLAY BEHAVIOR
+
+Implement correct timeline-based layering and playback.
+
+- The base video plays normally wherever no overlay clip covers the current timeline position.
+- An overlay clip on the Clip Track temporarily covers the base video for the overlay's exact timeline duration.
+- When the overlay ends, the base video resumes at its corresponding timeline position.
+- Multiple overlay clips must work without shifting or deleting the base video.
+- Define predictable overlap behavior. A higher video layer may take visual priority when overlay clips overlap.
+- Keep clip position, duration, track assignment, and playback time accurate.
+
+**Example:** If the base video runs from 0–60 seconds and an overlay clip is placed at 10–15 seconds:
+- 0–10 seconds: base video
+- 10–15 seconds: overlay clip
+- 15–60 seconds: base video resumes
+
+Support independent dragging, moving, trimming, splitting, selecting, resizing, and deleting of clips.
+
+Maintain audio synchronization and ensure the preview and final exported video use the same layering rules.
+
+## 5. UPGRADE THE TRANSITION TOOL
+
+Redesign the existing transition browser because the current interface and timeline behavior are inadequate.
+
+Implement at least 15 genuinely distinct transitions, preferably all of the following where technically feasible:
+
+1. Cross Dissolve
+2. Fade to Black
+3. Fade from Black
+4. Wipe Left
+5. Wipe Right
+6. Wipe Up
+7. Wipe Down
+8. Split Horizontal
+9. Split Vertical
+10. Doors Opening
+11. Curtains Opening
+12. Slide Left
+13. Slide Right
+14. Zoom In
+15. Zoom Out
+16. Iris Open
+17. Blur Dissolve
+18. Push Transition
+19. Circle Reveal
+20. Morph/Transform-style Transition, only if reliably supported
+
+Do not simply create 20 buttons with different names. Each transition must have a real visual effect. If an effect cannot be implemented reliably in the existing engine, report that limitation instead of presenting a fake implementation.
+
+### Transition browser UI
+- Show a preview thumbnail for each transition.
+- Display the transition name and a brief category or description.
+- Include search and categories: Basic, Slide, Reveal, Split, Zoom, and Creative.
+- Provide a sensible default duration and an adjustable duration control.
+- Include appropriate effect-specific settings when supported.
+- Maintain Cutline's existing dark and golden theme.
+- Keep the interface professional, compact, and responsive.
+
+## 6. TRANSITION SELECTION MUST CREATE A REAL TIMELINE ITEM
+
+When the user selects and applies a transition:
+
+- Apply it to the intended adjacent clips or supported boundary.
+- Create a visible transition item or region on the Transition Track.
+- Link the transition to the correct clip IDs and timeline position.
+- Display the transition name and duration.
+- Allow the duration to be adjusted.
+- Allow the user to replace, edit, or delete the transition.
+- Update playback and export when its duration or settings change.
+- Preserve it when saving and reopening a project.
+- Prevent invalid placement or explain why the transition cannot be applied.
+
+A transition between two adjacent clips must affect those clips at their shared boundary.
+
+For transitions between the base Video Track and overlay Clip Track, implement appropriate compositing behavior when supported. Do not silently apply a transition to unrelated clips.
+
+If the user trims or moves connected clips, update the transition's position and validity predictably. Do not leave broken or orphaned transition regions.
+
+## 7. REAL PREVIEW AND EXPORT INTEGRATION
+
+All transitions and track-layering behaviors must work in the actual video preview and final exported video.
+
+- Reuse the existing export engine where practical.
+- Use consistent clip timing and transition logic in preview and export.
+- Keep audio synchronization intact.
+- Avoid black frames, missing clips, unexpected timeline shifts, and playback failures.
+- Handle different clip dimensions and frame rates as reliably as the existing export architecture permits.
+- Do not implement transitions solely as CSS animations in the editor interface.
+- Ensure the exported video matches the editor preview as closely as possible.
+
+Do not break existing export formats, resolution settings, frame-rate options, or quality controls.
+
+## 8. PROFESSIONAL TIMELINE AND MEDIA UI
+
+Maintain Cutline's existing dark and golden branding.
+
+- Clearly distinguish Video, Clip, Audio, Text/Title, and Transition tracks.
+- Make transition regions easy to identify and select.
+- Show visible selection states for clips and projects.
+- Use consistent spacing, readable labels, subtle animations, and accessible controls.
+- Keep the timeline compact and responsive.
+- Use clear folder icons, thumbnails, project names, and folder expansion indicators.
+- Avoid unnecessary UI changes outside the requested areas.
+
+## 9. IMPLEMENTATION STRATEGY
+
+Before changing code:
+
+1. Inspect the existing project and identify why the Video Track was removed or replaced.
+2. Inspect the current transition tool and identify why selecting a transition fails to create a usable timeline item.
+3. Inspect the existing Media section and project persistence model.
+4. Determine how the preview renderer and export engine represent clips, overlays, and transitions.
+5. Implement the changes using the existing architecture wherever possible.
+6. Avoid duplicating the timeline engine or introducing unnecessary dependencies.
+7. Preserve project compatibility and existing user data.
+8. Do not replace the existing application with a simplified mockup.
+
+Implement in logical stages and verify each stage before proceeding.
+
+## 10. REQUIRED TESTS AND ACCEPTANCE CRITERIA
+
+### Media and folder library
+1. A new user sees “Drop your first project”.
+2. Importing a video opens a usable editing session.
+3. Exporting into a new folder creates one folder and one saved project entry.
+4. The folder expands to show its projects.
+5. Selecting a saved project restores its editable timeline.
+6. Importing another clip using the plus button starts a separate editing session.
+7. Exporting the new project into another folder creates a separate entry.
+8. Re-exporting an existing project does not create duplicates.
+9. The 10-folder limit is enforced.
+10. Search correctly finds folders and projects.
+11. Folder organization and editable projects survive application restart.
+12. Failed exports do not create false success entries.
+
+### Timeline and transitions
+13. The base Video Track plays normally.
+14. An overlay hides the base video only for its intended duration.
+15. The base video resumes at the correct timeline position.
+16. Multiple overlays work at their intended positions.
+17. Selecting a transition creates a visible timeline item at the correct location.
+18. Changing transition duration updates the timeline, preview, and export.
+19. Moving, trimming, splitting, and deleting clips do not leave broken transitions.
+20. Saving and reopening a project preserves track assignments, overlays, and transitions.
+21. Exported video matches the editor preview as closely as the architecture permits.
+22. Existing editing features and export settings still work.
+
+## FINAL DELIVERY REQUIREMENTS
+
+After implementation, provide a concise report covering:
+
+- Which features were implemented
+- Which tests passed
+- Which tests failed
+- Which features remain incomplete
+- Any limitations in the existing export engine or project storage
+
+Do not claim that functionality is complete merely because its interface exists. Verify the actual editing behavior and exported output.
+
+**Final instruction:** Preserve all existing Cutline functionality, project files, export options, authentication code, and branding. Do not perform a destructive rewrite. Do not remove working features to implement these upgrades.

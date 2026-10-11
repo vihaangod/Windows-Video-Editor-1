@@ -1,0 +1,419 @@
+# CUTLINE VIDEO EDITOR — COMPLETE TIMELINE, TRANSITIONS, MEDIA LIBRARY & DESKTOP BRANDING UPGRADE
+
+Update the existing Cutline video editor project. Modify the current implementation instead of creating a new project or replacing working features.
+
+Before coding, inspect the existing Media section, project storage, timeline and clip data models, preview renderer, transition system, export pipeline, project save/load behavior, Electron configuration, and logo assets. Identify existing bugs and reuse the current architecture wherever possible.
+
+## CRITICAL REQUIREMENTS
+
+- Do not remove or replace the original Video Track.
+- Add a separate Clip Track for overlay clips.
+- Build a working folder-based project library in the Media section.
+- Implement real transitions that work in preview and export.
+- Fix the unwanted whitish outlines around the logo in the Windows desktop application.
+- Preserve existing functionality, project data, authentication, branding, and export options.
+- Do not mark features complete unless they have been implemented and tested.
+- Do not replace the existing application with a simplified mockup or perform a destructive rewrite.
+
+# 1. MEDIA SECTION — FOLDER-BASED PROJECT LIBRARY
+
+Redesign the Media section to organize saved editable projects into user-created folders.
+
+### Initial empty state
+
+- On first launch, when there are no saved projects, display **“Drop your first project”**.
+- Provide an obvious way to import a video and start editing.
+- Once media is imported, open a usable editing session.
+- Do not create a project folder automatically just because the user imported a video.
+
+### Folder and export workflow
+
+When the user exports a project:
+
+1. Allow the user to select an existing project folder or create a new folder.
+2. If creating a folder, ask for its name.
+3. Save the editable project inside the selected folder's project library.
+4. Save the exported video in the appropriate folder or associated export location.
+5. After a successful save/export, update the Media section automatically.
+6. Prevent duplicate folder creation when exporting an existing project again.
+7. If the user is editing a saved project, default to its current folder while allowing another destination to be selected.
+8. If the user is editing a newly imported clip, do not silently assign it to an unrelated folder.
+9. Keep the project's identity stable when the user saves or exports it repeatedly.
+
+### Folder limit
+
+- Allow a maximum of **10 folders**.
+- When the limit is reached, disable new-folder creation and explain that the user must select an existing folder or remove one first.
+- Each folder may contain any number of projects, subject to available storage.
+- Enforce the limit in the actual folder-creation logic, not only in the UI.
+
+### Expandable folders
+
+- Display each folder as a clear, expandable or collapsible row/card.
+- Clicking a folder expands it downward to reveal all saved projects inside.
+- Clicking again collapses it.
+- Display the folder name and project count.
+- Each project entry should show a thumbnail, project name, duration, and last-modified date when available.
+- Selecting a project must reopen its complete editable timeline, not merely play the exported MP4.
+- Add appropriate rename and delete actions.
+- Require confirmation before destructive operations.
+- Before deleting a folder, clearly explain what happens to its projects and exported files.
+- Preserve folder/project relationships after restarting the application.
+
+### Find Media search and plus button
+
+The Media section must include a working **Find Media** search bar and a **plus (+)** button.
+
+**Search:**
+
+- Search folders and saved projects by name.
+- Filter results as the user types.
+- Keep matching projects visible inside their parent folders.
+- Provide a clear-search control and a useful empty-results message.
+- Searching must not change or delete project data.
+
+**Plus button:**
+
+- Open the native file picker to import a separate media clip.
+- Start a separate editing session if no saved project is selected.
+- Do not overwrite or replace an existing saved project.
+- Do not immediately create a project folder after import.
+- Let the user edit the clip and choose a folder during saving/export.
+- After a successful export, save the project in the selected folder and show it in the Media section.
+
+# 2. PROJECT STORAGE, SAVING AND REOPENING
+
+Exporting an MP4 alone is not sufficient. Save the editable project data too.
+
+Each saved project must retain:
+
+- Unique project ID and project name.
+- Parent folder ID.
+- Source media references and any required asset references.
+- Timeline tracks and assignments.
+- Clip positions, start times, durations, and trim points.
+- Overlay and compositing settings.
+- Text/title overlays.
+- Transitions, durations, and effect settings.
+- Project settings and applicable export preferences.
+- Creation and last-modified timestamps.
+- Exported file references when available.
+
+Use the existing persistence architecture if reliable. Otherwise, implement a suitable local project database or structured project files compatible with the existing application.
+
+- Do not rely only on temporary React state or filenames to reconstruct a project.
+- Use the existing autosave/save functionality consistently.
+- Reopening a saved project must restore its editable timeline without losing clips, transitions, titles, or settings.
+- Keep project IDs stable during subsequent saves and exports.
+- Re-exporting a project should update its existing project entry rather than create a duplicate entry or folder.
+- Handle missing or moved source media gracefully and explain how to relink it when feasible.
+- Failed saves or exports must not create misleading success entries.
+- Do not delete existing user projects or migrate data destructively.
+
+# 3. RESTORE AND SEPARATE TIMELINE TRACKS
+
+Maintain separate, persistent tracks with clear labels:
+
+1. **Video Track:** Main/base video.
+2. **Clip Track:** Additional video clips that overlay the base video.
+3. **Audio Track:** Audio clips, where supported.
+4. **Text/Title Track:** Text and title overlays.
+5. **Transition Track:** Visible transition regions linked to clips or supported boundaries.
+
+The Video Track and Clip Track are different tracks with different purposes.
+
+- Adding or modifying the Clip Track must never remove, replace, or disable the original Video Track.
+- Inspect the existing implementation to determine why the Video Track was removed or replaced, then fix the underlying cause.
+- Preserve the existing timeline controls and project compatibility wherever possible.
+- Ensure track assignments are stored persistently and restored when reopening projects.
+- Keep selection, dragging, trimming, splitting, and deletion behavior consistent with the existing timeline architecture.
+
+# 4. CLIP TRACK OVERLAY BEHAVIOR
+
+Implement correct timeline-based layering and playback.
+
+- The base video plays normally wherever no overlay clip covers the current timeline position.
+- An overlay clip on the Clip Track temporarily covers the base video for the overlay's exact timeline duration.
+- When the overlay ends, the base video resumes at its corresponding timeline position.
+- Multiple overlay clips must work without shifting or deleting the base video.
+- Define predictable overlap behavior. A higher video layer may take visual priority when overlay clips overlap.
+- Keep clip position, duration, track assignment, and playback time accurate.
+
+**Example:** If the base video runs from 0–60 seconds and an overlay clip is placed at 10–15 seconds:
+
+- 0–10 seconds: base video.
+- 10–15 seconds: overlay clip.
+- 15–60 seconds: base video resumes at its corresponding timeline position.
+
+Support independent:
+
+- Dragging and moving.
+- Trimming and resizing.
+- Splitting.
+- Selecting.
+- Deleting.
+- Adjusting supported overlay/compositing settings.
+
+Maintain audio synchronization and ensure the preview and final exported video use the same layering rules.
+
+Do not implement overlay behavior only as a visual timeline decoration. It must affect actual playback and exported output.
+
+# 5. UPGRADE THE TRANSITION TOOL
+
+Redesign the existing transition browser because its current interface and timeline behavior are inadequate.
+
+Implement at least **15 genuinely distinct working transitions**, preferably all of the following where technically feasible:
+
+1. Cross Dissolve.
+2. Fade to Black.
+3. Fade from Black.
+4. Wipe Left.
+5. Wipe Right.
+6. Wipe Up.
+7. Wipe Down.
+8. Split Horizontal.
+9. Split Vertical.
+10. Doors Opening.
+11. Curtains Opening.
+12. Slide Left.
+13. Slide Right.
+14. Zoom In.
+15. Zoom Out.
+16. Iris Open.
+17. Blur Dissolve.
+18. Push Transition.
+19. Circle Reveal.
+20. Morph/Transform-style Transition, only if reliably supported.
+
+Do not simply create 20 buttons with different names. Each transition must have a real visual effect.
+
+- Reuse the existing preview and export engine where practical.
+- If an effect cannot be implemented reliably in the existing engine, report that limitation instead of presenting a fake implementation.
+- Prioritize correctness and stable playback over an inflated transition count.
+
+### Transition browser UI
+
+- Show a preview thumbnail for each transition.
+- Display the transition name and a brief category or description.
+- Include search and these categories: **Basic, Slide, Reveal, Split, Zoom, Creative**.
+- Provide a sensible default duration and an adjustable duration control.
+- Include appropriate effect-specific settings when supported.
+- Maintain Cutline's existing dark-and-golden theme.
+- Keep the interface professional, compact, responsive, and easy to navigate.
+
+# 6. TRANSITION SELECTION MUST CREATE A REAL TIMELINE ITEM
+
+When the user selects and applies a transition:
+
+- Apply it to the intended adjacent clips or supported boundary.
+- Create a visible transition item or region on the Transition Track.
+- Link the transition to the correct clip IDs and timeline position.
+- Display the transition name and duration.
+- Allow the duration to be adjusted.
+- Allow the user to replace, edit, or delete the transition.
+- Update playback and export when its duration or settings change.
+- Preserve it when saving and reopening a project.
+- Prevent invalid placement or explain why the transition cannot be applied.
+
+A transition between two adjacent clips must affect those clips at their shared boundary.
+
+For transitions between the base Video Track and overlay Clip Track, implement appropriate compositing behavior when supported. Do not silently apply a transition to unrelated clips.
+
+If the user trims or moves connected clips:
+
+- Update the transition's position and validity predictably.
+- Recalculate its timing when appropriate.
+- Prevent transitions from referencing deleted or unrelated clips.
+- Do not leave broken or orphaned transition regions.
+- Explain when a transition must be repositioned or removed because the clips are no longer compatible.
+
+Transitions must use real clip/timeline data and not just button state.
+
+# 7. REAL PREVIEW AND EXPORT INTEGRATION
+
+All transitions and track-layering behaviors must work in the actual video preview and final exported video.
+
+- Reuse the existing export engine where practical.
+- Use consistent clip timing and transition logic in preview and export.
+- Keep audio synchronization intact.
+- Avoid black frames, missing clips, unexpected timeline shifts, and playback failures.
+- Handle different clip dimensions and frame rates as reliably as the existing export architecture permits.
+- Do not implement transitions solely as CSS animations in the editor interface.
+- Ensure the exported video matches the editor preview as closely as the architecture permits.
+- Keep the current export formats, resolution settings, frame-rate options, and quality controls working.
+- Do not remove or silently change existing export options.
+- Handle failed renders and unsupported effects honestly.
+- Avoid introducing unnecessary dependencies or duplicating the timeline engine.
+
+If the current export engine cannot reliably support a requested effect, investigate the least disruptive compatible approach. Do not claim that preview/export parity is complete until it has been tested.
+
+# 8. PROFESSIONAL TIMELINE AND MEDIA UI
+
+Maintain Cutline's existing dark-and-golden branding.
+
+- Clearly distinguish Video, Clip, Audio, Text/Title, and Transition tracks.
+- Make transition regions easy to identify and select.
+- Show visible selection states for clips and projects.
+- Use consistent spacing, readable labels, subtle animations, and accessible controls.
+- Keep the timeline compact and responsive.
+- Use clear folder icons, thumbnails, project names, and folder expansion indicators.
+- Provide visible feedback for saving, exporting, and failures.
+- Avoid unnecessary UI changes outside the requested areas.
+- Preserve existing navigation, editing tools, and branding.
+
+# 9. DESKTOP APP LOGO — FIX UNWANTED WHITISH OUTLINES
+
+The Cutline desktop app logo currently does not look correct. Unwanted whitish outlines or light-colored halos are visible around the logo. Fix the actual logo asset or rendering problem.
+
+### Inspect the root cause
+
+Before changing the logo, inspect:
+
+- The original logo source file and all variants.
+- Image dimensions and scaling.
+- The alpha channel and transparent pixels.
+- Possible white matte pixels around anti-aliased edges.
+- Incorrect background colors or transparency handling.
+- CSS filters, shadows, borders, and other rendering styles.
+- The logo asset references used by the Electron application, Windows executable, installer, taskbar, and desktop shortcut.
+
+Identify the actual cause instead of guessing.
+
+### Fix requirements
+
+- Remove unwanted white or light-colored halos around the logo without changing its intended design, shape, or brand identity.
+- Preserve the existing Cutline dark-and-gold color scheme.
+- Ensure transparent areas remain genuinely transparent and blend cleanly with the dark application background.
+- If the source image has a white matte, correct the edge pixels and transparency properly rather than merely adding a dark background.
+- Use a high-quality transparent PNG for in-app branding where appropriate.
+- Keep the logo sharp at different display sizes.
+- Prevent stretching, pixelation, clipping, unwanted borders, and distorted proportions.
+- Check whether the app header, Electron window, taskbar, installer, and desktop shortcut use different assets. Fix each relevant asset independently.
+- If the Windows icon uses an ICO file, ensure it contains suitable multiple resolutions and correct transparency.
+- Update the actual source assets and their references in the existing project.
+- Do not merely hide the outlines with CSS or place a dark box behind the logo.
+- Do not change the logo design unnecessarily or introduce a completely different logo.
+- Preserve the existing Electron configuration and branding references unless a change is required to fix the issue.
+
+### Logo acceptance criteria
+
+1. No unwanted whitish outline or halo remains around the logo.
+2. Transparent edges blend cleanly against Cutline's dark interface.
+3. The logo retains its intended shape and gold colors.
+4. The application icon and installer icon render correctly on Windows.
+5. The logo remains sharp at common display sizes.
+6. The updated assets are included in the rebuilt Windows installer.
+7. Existing functionality and unrelated branding assets remain intact.
+
+Rebuild and test the Windows installer after correcting the assets, where the current environment supports it. If the environment cannot build or inspect the Windows installer, state that limitation clearly.
+
+# 10. IMPLEMENTATION STRATEGY
+
+Before changing code:
+
+1. Inspect the existing project structure and identify the relevant files and components.
+2. Inspect the existing Media section and identify how projects and folders are currently stored.
+3. Inspect the timeline data model and determine why the original Video Track was removed or replaced.
+4. Inspect the current transition tool and identify why selecting a transition fails to create a usable timeline item.
+5. Inspect the preview renderer and export engine to determine how clips, overlays, and transitions are represented.
+6. Inspect project save/load behavior and check whether existing projects can be migrated without data loss.
+7. Inspect the logo source files and Electron icon configuration to determine why whitish outlines appear.
+8. Make a staged implementation plan and implement the changes using the existing architecture wherever possible.
+9. Avoid duplicating the timeline engine, introducing unnecessary dependencies, or replacing working systems.
+10. Preserve existing project compatibility, user data, authentication, and application branding.
+11. Run available type checks, lint checks, and automated tests after each major stage.
+12. Verify actual behavior rather than relying on screenshots or UI appearance alone.
+
+### Recommended implementation stages
+
+**Stage A — Inspection and safety**
+- Map the existing architecture.
+- Identify persistence and export limitations.
+- Back up or safely preserve existing data.
+- Identify likely regressions before making changes.
+
+**Stage B — Media library and persistence**
+- Implement folders, project entries, search, folder limits, save/export workflow, rename/delete, and reopening.
+- Test persistence across application restarts.
+
+**Stage C — Timeline tracks and overlays**
+- Restore the original Video Track if broken.
+- Add the separate Clip Track.
+- Implement overlay timing and independent clip editing.
+- Verify playback and export behavior.
+
+**Stage D — Transitions**
+- Build the transition browser.
+- Implement real transitions in the timeline.
+- Integrate supported effects into preview and export.
+- Verify transition editing and persistence.
+
+**Stage E — Desktop logo and branding**
+- Fix the logo assets and transparency.
+- Verify relevant Electron and Windows icon references.
+- Rebuild the installer where possible.
+
+**Stage F — Regression testing**
+- Verify existing editing tools, authentication, project data, export options, and branding.
+- Fix regressions before declaring completion.
+
+Do not stop after creating the UI. Complete the underlying behavior as far as the existing architecture permits.
+
+# 11. REQUIRED TESTS AND ACCEPTANCE CRITERIA
+
+### Media and folder library
+
+1. A new user sees “Drop your first project”.
+2. Importing a video opens a usable editing session.
+3. Exporting into a new folder creates one folder and one saved project entry.
+4. The folder expands to show its projects.
+5. Selecting a saved project restores its editable timeline.
+6. Importing another clip using the plus button starts a separate editing session.
+7. Exporting the new project into another folder creates a separate entry.
+8. Re-exporting an existing project does not create duplicates.
+9. The 10-folder limit is enforced.
+10. Search correctly finds folders and projects.
+11. Folder organization and editable projects survive application restart.
+12. Failed exports do not create false success entries.
+13. Rename and delete operations behave correctly and use appropriate confirmations.
+14. Importing a clip never overwrites an unrelated saved project.
+
+### Timeline and transitions
+
+15. The base Video Track plays normally.
+16. An overlay hides the base video only for its intended duration.
+17. The base video resumes at the correct timeline position.
+18. Multiple overlays work at their intended positions.
+19. Selecting a transition creates a visible timeline item at the correct location.
+20. Changing transition duration updates the timeline, preview, and export.
+21. Moving, trimming, splitting, and deleting clips do not leave broken transitions.
+22. Saving and reopening a project preserves track assignments, overlays, and transitions.
+23. Exported video matches the editor preview as closely as the architecture permits.
+24. Existing editing features and export settings still work.
+
+### Desktop branding
+
+25. The logo has no unwanted whitish outlines or halos in the desktop application.
+26. Transparent logo edges blend cleanly with the dark interface.
+27. The Windows app icon, installer icon, and desktop shortcut use the correct assets.
+28. The logo remains sharp and correctly proportioned at different sizes.
+29. The rebuilt desktop application contains the corrected assets, where installer rebuilding is supported.
+
+# 12. FINAL DELIVERY REPORT
+
+After implementation, provide a concise, honest report covering:
+
+- Which features were implemented.
+- Which automated tests passed.
+- Which manual tests passed.
+- Which tests failed.
+- Which features remain incomplete.
+- Any limitations in the existing export engine or project storage.
+- Any limitations preventing Windows installer verification.
+- Any known issues with transitions, preview/export parity, or source media relinking.
+
+Do not claim a test passed unless it was actually run and its result verified. Clearly distinguish completed features from partially implemented features and UI-only work.
+
+## FINAL INSTRUCTION
+
+Preserve all existing Cutline functionality, project files, export options, authentication code, and branding. Do not perform a destructive rewrite. Do not remove working features to implement these upgrades. Prioritize stable, testable functionality over superficial UI changes.

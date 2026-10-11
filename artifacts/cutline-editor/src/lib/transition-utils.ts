@@ -39,7 +39,7 @@ function clipDuration(clip: Clip): number {
 function isVideoClip(project: Project, clip: Clip | undefined): clip is Clip {
   return Boolean(
     clip && !clip.text && !clip.audioOnly && !clip.filterEffect &&
-    project.tracks.find((track) => track.id === clip.trackId)?.kind === 'video',
+    ['video', 'overlay'].includes(project.tracks.find((track) => track.id === clip.trackId)?.kind || ''),
   );
 }
 

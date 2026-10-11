@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Sparkles, Trash2, WandSparkles } from 'lucide-react';
 import { FILTER_PRESETS, type ClipEffects, type ClipFilter, type ClipTransition } from '@/lib/composition';
 
-export type TransitionPresetType = 'fade' | 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+export type TransitionPresetType = ClipTransition['type'];
 export type TransitionPresetMode = 'entrance' | 'exit' | 'between';
 export type TransitionPresetDirection = 'left' | 'right' | 'up' | 'down';
+type TransitionCategory = 'Basic' | 'Slide' | 'Reveal' | 'Split' | 'Zoom' | 'Creative';
 
 type Props = {
   workspace: 'effects' | 'transitions' | 'filters';
@@ -37,14 +38,29 @@ const FILTERS = FILTER_PRESETS.map((preset) => ({
   sample: preset.id,
 }));
 
-const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPresetType; sample: string }> = [
-  { name: 'Fade', description: 'Fade a single clip in or out from black.', type: 'fade', sample: 'fade-in' },
-  { name: 'Cross dissolve', description: 'Blend adjacent clips with a real two-source dissolve.', type: 'cross-dissolve', sample: 'fade-both' },
-  { name: 'Fade through black', description: 'Fade out, pass through black, then fade in.', type: 'fade-through-black', sample: 'fade-out' },
-  { name: 'Wipe', description: 'Reveal the next adjacent clip from left to right.', type: 'wipe', sample: 'fade-in' },
-  { name: 'Slide', description: 'Slide the incoming clip in from the right.', type: 'slide', sample: 'fade-in' },
-  { name: 'Zoom', description: 'Dissolve while the incoming clip scales into place.', type: 'zoom', sample: 'soft' },
+const TRANSITIONS: Array<{ name: string; description: string; type: TransitionPresetType; sample: string; category: TransitionCategory }> = [
+  { name: 'Fade', description: 'Fade a clip from or to the background.', type: 'fade', sample: 'fade', category: 'Basic' },
+  { name: 'Cross dissolve', description: 'Blend both moving clips through the edit point.', type: 'cross-dissolve', sample: 'cross', category: 'Basic' },
+  { name: 'Fade through black', description: 'Fade out, pause on black, then fade in.', type: 'fade-through-black', sample: 'black', category: 'Basic' },
+  { name: 'Wipe', description: 'Reveal the next clip along the selected direction.', type: 'wipe', sample: 'wipe', category: 'Reveal' },
+  { name: 'Slide', description: 'Bring the incoming clip over a stationary outgoing clip.', type: 'slide', sample: 'slide', category: 'Slide' },
+  { name: 'Zoom', description: 'Dissolve as the incoming clip settles into frame.', type: 'zoom', sample: 'zoom', category: 'Zoom' },
+  { name: 'Zoom in', description: 'Scale up from a smaller frame into the next shot.', type: 'zoom-in', sample: 'zoom-in', category: 'Zoom' },
+  { name: 'Zoom out', description: 'Scale down from a larger frame into the next shot.', type: 'zoom-out', sample: 'zoom-out', category: 'Zoom' },
+  { name: 'Split horizontal', description: 'Open the incoming frame outward from a horizontal seam.', type: 'split-horizontal', sample: 'split-h', category: 'Split' },
+  { name: 'Split vertical', description: 'Open the incoming frame outward from a vertical seam.', type: 'split-vertical', sample: 'split-v', category: 'Split' },
+  { name: 'Barn doors', description: 'Two angled panels part from the center to reveal the shot.', type: 'doors', sample: 'doors', category: 'Split' },
+  { name: 'Blinds', description: 'Reveal the next shot in staggered horizontal strips.', type: 'blinds', sample: 'blinds', category: 'Reveal' },
+  { name: 'Iris', description: 'Expand an oval window from the center of the frame.', type: 'iris', sample: 'iris', category: 'Reveal' },
+  { name: 'Circle reveal', description: 'Expand a circular window from the frame center.', type: 'circle', sample: 'circle', category: 'Reveal' },
+  { name: 'Diamond reveal', description: 'Open a diamond-shaped window into the next shot.', type: 'diamond', sample: 'diamond', category: 'Reveal' },
+  { name: 'Blur dissolve', description: 'Blend the shots through a brief, soft-focus peak.', type: 'blur-dissolve', sample: 'blur', category: 'Creative' },
+  { name: 'Push', description: 'Push the outgoing frame away as the next shot enters.', type: 'push', sample: 'push', category: 'Slide' },
+  { name: 'Curtains', description: 'Reveal the frame from its outside edges inward.', type: 'curtain', sample: 'curtain', category: 'Reveal' },
+  { name: 'Flash', description: 'Blend the shots through a brief white flash.', type: 'flash', sample: 'flash', category: 'Creative' },
+  { name: 'Diagonal reveal', description: 'Wipe the next shot across the frame on a diagonal.', type: 'diagonal', sample: 'diagonal', category: 'Reveal' },
 ];
+const TRANSITION_CATEGORIES: Array<'All' | TransitionCategory> = ['All', 'Basic', 'Slide', 'Reveal', 'Split', 'Zoom', 'Creative'];
 
 export default function EffectWorkspace({
   workspace,
@@ -65,6 +81,7 @@ export default function EffectWorkspace({
   const [duration, setDuration] = useState(.6);
   const [mode, setMode] = useState<TransitionPresetMode>(selectedTransition?.mode || 'entrance');
   const [direction, setDirection] = useState<TransitionPresetDirection>(selectedTransition?.direction || 'right');
+  const [transitionCategory, setTransitionCategory] = useState<'All' | TransitionCategory>('All');
   useEffect(() => {
     if (!selectedTransition) return;
     setDuration(Math.min(4, Math.max(.1, selectedTransition.duration)));
@@ -73,8 +90,11 @@ export default function EffectWorkspace({
   }, [selectedTransition?.id, selectedTransition?.duration, selectedTransition?.mode, selectedTransition?.direction]);
   const presets = workspace === 'effects' ? EFFECTS : workspace === 'filters' ? FILTERS : TRANSITIONS;
   const visible = useMemo(
-    () => presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())),
-    [presets, query],
+    () => presets.filter((preset) =>
+      `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase()) &&
+      (workspace !== 'transitions' || transitionCategory === 'All' ||
+        ('category' in preset && preset.category === transitionCategory))),
+    [presets, query, transitionCategory, workspace],
   );
   const title = workspace === 'effects' ? 'Effects' : workspace === 'filters' ? 'Filters' : 'Transitions';
   const apply = (preset: typeof presets[number]) => {
@@ -192,6 +212,16 @@ export default function EffectWorkspace({
           </button>
         </div>
       </section>}
+      {workspace === 'transitions' && <nav className="cutline-transition-categories" aria-label="Filter transition category">
+        {TRANSITION_CATEGORIES.map((category) => <button
+          type="button"
+          key={category}
+          className={transitionCategory === category ? 'is-active' : ''}
+          aria-pressed={transitionCategory === category}
+          onClick={() => setTransitionCategory(category)}
+          data-testid={`button-transition-category-${category.toLowerCase()}`}
+        >{category}</button>)}
+      </nav>}
       {workspace === 'filters' && <>
         <div className="cutline-filter-workspace__active">
           <span>Existing clip-wide stack</span><strong>{selectedFilterLabel}</strong>
@@ -228,10 +258,13 @@ export default function EffectWorkspace({
             data-testid={workspace === 'filters' ? `button-filter-${(preset as typeof FILTERS[number]).id}` : undefined}
           >
             <span className={`cutline-effect-card__preview cutline-effect-card__preview--${preset.sample} ${workspace === 'filters' && activeFilters.some((filter) => filter.presetId === (preset as typeof FILTERS[number]).id && filter.enabled) ? 'is-active' : ''}`} aria-hidden="true">
-              {thumbnail ? <img src={thumbnail} alt="" style={{ filter: previewFilter }} /> : <span />}
+              {workspace === 'transitions'
+                ? <span className={`cutline-transition-thumb cutline-transition-thumb--${preset.sample}`}><i /><b /><em /></span>
+                : thumbnail ? <img src={thumbnail} alt="" style={{ filter: previewFilter }} /> : <span />}
             </span>
             <span className="cutline-effect-card__copy">
               <strong>{preset.name}</strong>
+              {workspace === 'transitions' && 'category' in preset && <small className="cutline-effect-card__category">{preset.category}</small>}
               <small>{preset.description}</small>
             </span>
             <span className="cutline-effect-card__apply">{workspace === 'filters' ? (preset.name === 'Original' ? 'Clear' : 'Add 5s') : 'Apply'}</span>

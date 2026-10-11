@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/cutline-website/"
+title = "Cutline Download Website"
+description = "A separate static website for Cutline, presenting its Windows video editor, product features, system requirements, release version, and download link for Cloudflare Pages hosting."
+version = "1.0.0"
+id = "artifacts/cutline-website"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/cutline-website/" ]
+localPort = 21109
+
+[services.development]
+run = "pnpm --filter @workspace/cutline-website run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/cutline-website", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/cutline-website/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21109"
+BASE_PATH = "/cutline-website/"

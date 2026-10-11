@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getActiveTimelineFilters, getPreviewCanvasSize, removeAssetReferencesFromProject, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
+import { ensureProjectTimelineTracks, getActiveTimelineFilters, getPreviewCanvasSize, removeAssetReferencesFromProject, renderProjectFrame, restoreProjectSelection, shouldDeferPreviewVideoFrame, type Project } from './composition.ts';
 
 function createContext(width: number, height: number) {
   const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -64,6 +64,29 @@ test('preview backing stores preserve 1080p and cap 4K dimensions without changi
   assert.deepEqual(getPreviewCanvasSize(3840, 2160, 1280), { width: 1280, height: 720 });
   assert.deepEqual(getPreviewCanvasSize(7680, 4320), { width: 1920, height: 1080 });
   assert.equal(textProject().frameRate, 60);
+});
+
+test('legacy projects gain a separate Clip Track without changing saved clip or base-track IDs', () => {
+  const original: Project = {
+    ...textProject(),
+    tracks: [
+      { id: 'legacy-video', name: 'Clips', kind: 'video', order: 0, muted: false },
+      { id: 'legacy-audio', name: 'Audio 1', kind: 'audio', order: 1, muted: false },
+      { id: 'text-track', name: 'Text 1', kind: 'text', order: 2, muted: false },
+    ],
+  };
+  let id = 0;
+  const upgraded = ensureProjectTimelineTracks(original, () => `migrated-${++id}`);
+
+  assert.notEqual(upgraded, original);
+  assert.deepEqual(upgraded.tracks.map(({ id: trackId, name, kind, order }) => ({ id: trackId, name, kind, order })), [
+    { id: 'legacy-video', name: 'Video Track', kind: 'video', order: 0 },
+    { id: 'migrated-1', name: 'Clip Track', kind: 'overlay', order: 1 },
+    { id: 'legacy-audio', name: 'Audio 1', kind: 'audio', order: 2 },
+    { id: 'text-track', name: 'Text 1', kind: 'text', order: 3 },
+  ]);
+  assert.equal(upgraded.clips, original.clips, 'clip IDs and timeline data are retained');
+  assert.equal(ensureProjectTimelineTracks(upgraded), upgraded, 'repeat migration is idempotent');
 });
 
 test('preview waits for a decoded video frame instead of clearing to black during a seek', () => {

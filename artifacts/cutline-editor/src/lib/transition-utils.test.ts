@@ -34,6 +34,27 @@ test('legacy transitions keep between-clip timing and default direction', () => 
   });
 });
 
+test('overlay clips can carry the same edge transitions as base video clips', () => {
+  const project = createProject();
+  project.tracks[0] = { ...project.tracks[0], name: 'Clip Track', kind: 'overlay' };
+  const transition = {
+    id: 'overlay-transition',
+    fromClipId: 'clip-a',
+    toClipId: 'clip-b',
+    type: 'diagonal' as const,
+    duration: .8,
+  };
+
+  const range = getTransitionTimelineRange(project, transition);
+  assert.ok(range);
+  assert.equal(range.duration, .8);
+  assert.equal(range.anchor, 2);
+  assert.equal(range.mode, 'between');
+  assert.deepEqual(range.clipIds, ['clip-a', 'clip-b']);
+  assert.ok(Math.abs(range.start - 1.6) < 1e-9);
+  assert.ok(Math.abs(range.end - 2.4) < 1e-9);
+});
+
 test('between-clip duration cannot exceed the shorter adjacent clip', () => {
   const project = createProject();
   const transition = { id: 'long', fromClipId: 'clip-a', toClipId: 'clip-b', type: 'cross-dissolve' as const, duration: 3 };

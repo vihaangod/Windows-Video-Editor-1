@@ -1,6 +1,6 @@
 import { getTransitionDirection, getTransitionMode, getTransitionTargetClipId, getTransitionTimelineRange } from './transition-utils.ts';
 
-export type TrackKind = 'video' | 'audio' | 'text' | 'effects';
+export type TrackKind = 'video' | 'overlay' | 'audio' | 'text' | 'effects';
 
 export type Track = {
   id: string;
@@ -145,7 +145,27 @@ export type ClipTransition = {
   id: string;
   fromClipId: string;
   toClipId: string;
-  type: 'fade' | 'cross-dissolve' | 'fade-through-black' | 'wipe' | 'slide' | 'zoom';
+  type:
+    | 'fade'
+    | 'cross-dissolve'
+    | 'fade-through-black'
+    | 'wipe'
+    | 'slide'
+    | 'zoom'
+    | 'zoom-in'
+    | 'zoom-out'
+    | 'split-horizontal'
+    | 'split-vertical'
+    | 'doors'
+    | 'blinds'
+    | 'iris'
+    | 'circle'
+    | 'diamond'
+    | 'blur-dissolve'
+    | 'push'
+    | 'curtain'
+    | 'flash'
+    | 'diagonal';
   duration: number;
   /** Omitted on older projects; those transitions are interpreted as between-clip transitions. */
   mode?: 'entrance' | 'exit' | 'between';
@@ -173,6 +193,49 @@ export type ProjectRenderIndex = {
   tracksById: ReadonlyMap<string, Track>;
   clipsById: ReadonlyMap<string, Clip>;
 };
+
+/** Adds the required base and overlay layers to legacy projects without changing existing IDs or clips. */
+export function ensureProjectTimelineTracks(
+  project: Project,
+  createId: () => string = () => crypto.randomUUID(),
+): Project {
+  let tracks = [...project.tracks].sort((a, b) => a.order - b.order);
+  let changed = false;
+  let baseTrack = tracks.find((track) => track.kind === 'video');
+  if (!baseTrack) {
+    baseTrack = {
+      id: createId(),
+      name: 'Video Track',
+      kind: 'video',
+      order: 0,
+      muted: false,
+      visible: true,
+      locked: false,
+    };
+    tracks.unshift(baseTrack);
+    changed = true;
+  } else if (baseTrack.name === 'Clips') {
+    tracks = tracks.map((track) => track.id === baseTrack!.id ? { ...track, name: 'Video Track' } : track);
+    baseTrack = tracks.find((track) => track.kind === 'video');
+    changed = true;
+  }
+
+  if (!tracks.some((track) => track.kind === 'overlay')) {
+    const baseIndex = Math.max(0, tracks.findIndex((track) => track.kind === 'video'));
+    tracks.splice(baseIndex + 1, 0, {
+      id: createId(),
+      name: 'Clip Track',
+      kind: 'overlay',
+      order: baseIndex + 1,
+      muted: false,
+      visible: true,
+      locked: false,
+    });
+    changed = true;
+  }
+  if (!changed) return project;
+  return { ...project, tracks: tracks.map((track, order) => ({ ...track, order })) };
+}
 
 export function createProjectRenderIndex(project: Project, assets: Asset[]): ProjectRenderIndex {
   return {
@@ -694,7 +757,7 @@ function drawMedia(
   time: number,
   project: Project,
   playing: boolean,
-  options: { alpha?: number; sampleTime?: number; offsetX?: number; offsetY?: number; scaleMultiplier?: number; fade?: boolean } = {},
+  options: { alpha?: number; sampleTime?: number; offsetX?: number; offsetY?: number; scaleMultiplier?: number; fade?: boolean; transitionBlur?: number } = {},
 ) {
   const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth || asset.width || 0 : source.naturalWidth || asset.width || 0;
   const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight || asset.height || 0 : source.naturalHeight || asset.height || 0;
@@ -724,7 +787,7 @@ function drawMedia(
   context.rotate(transform.rotation * Math.PI / 180);
   context.scale(transform.scale * (options.scaleMultiplier ?? 1), transform.scale * (options.scaleMultiplier ?? 1));
   context.globalAlpha *= Math.max(0, Math.min(1, (clip.opacity ?? 1) * (options.fade === false ? 1 : getClipFade(clip, time)) * (options.alpha ?? 1)));
-  context.filter = `brightness(${effects.brightness}) contrast(${effects.contrast}) saturate(${effects.saturation}) blur(${effects.blur}px)`;
+  context.filter = `brightness(${effects.brightness}) contrast(${effects.contrast}) saturate(${effects.saturation}) blur(${Math.max(0, effects.blur + (options.transitionBlur ?? 0))}px)`;
   const left = -transform.anchorX * drawWidth;
   const top = -transform.anchorY * drawHeight;
   context.beginPath();
@@ -812,6 +875,87 @@ function drawMarkup(context: CanvasRenderingContext2D, drawing: MarkupDrawing) {
   context.restore();
 }
 
+function clampProgress(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+/** Build the incoming-frame mask used by both the live preview and final render. */
+function applyTransitionMask(
+  context: CanvasRenderingContext2D,
+  type: ClipTransition['type'],
+  progress: number,
+  direction: 'left' | 'right' | 'up' | 'down',
+  width: number,
+  height: number,
+): boolean {
+  const p = clampProgress(progress);
+  const x = width / 2;
+  const y = height / 2;
+  context.beginPath();
+  if (type === 'wipe') {
+    if (direction === 'left') context.rect(width * (1 - p), 0, width * p, height);
+    else if (direction === 'right') context.rect(0, 0, width * p, height);
+    else if (direction === 'up') context.rect(0, height * (1 - p), width, height * p);
+    else context.rect(0, 0, width, height * p);
+  } else if (type === 'split-horizontal') {
+    const half = height * p / 2;
+    context.rect(0, y - half, width, half);
+    context.rect(0, y, width, half);
+  } else if (type === 'split-vertical') {
+    const half = width * p / 2;
+    context.rect(x - half, 0, half, height);
+    context.rect(x, 0, half, height);
+  } else if (type === 'doors') {
+    const spread = width * p / 2;
+    const slant = height * .12 * (1 - p);
+    context.moveTo(x - spread, 0);
+    context.lineTo(x, slant);
+    context.lineTo(x, height - slant);
+    context.lineTo(x - spread, height);
+    context.closePath();
+    context.moveTo(x + spread, 0);
+    context.lineTo(x, slant);
+    context.lineTo(x, height - slant);
+    context.lineTo(x + spread, height);
+    context.closePath();
+  } else if (type === 'blinds') {
+    const strips = 8;
+    const stripHeight = height / strips;
+    for (let index = 0; index < strips; index += 1) {
+      const stagger = index % 2 ? .06 : 0;
+      const stripProgress = clampProgress((p - stagger) / (1 - stagger));
+      context.rect(0, index * stripHeight, width * stripProgress, stripHeight + 1);
+    }
+  } else if (type === 'iris') {
+    context.ellipse(x, y, width * .7 * p, height * .8 * p, 0, 0, Math.PI * 2);
+  } else if (type === 'circle') {
+    context.arc(x, y, Math.hypot(width, height) * .56 * p, 0, Math.PI * 2);
+  } else if (type === 'diamond') {
+    const halfWidth = width * .76 * p;
+    const halfHeight = height * .76 * p;
+    context.moveTo(x, y - halfHeight);
+    context.lineTo(x + halfWidth, y);
+    context.lineTo(x, y + halfHeight);
+    context.lineTo(x - halfWidth, y);
+    context.closePath();
+  } else if (type === 'curtain') {
+    const reveal = width * p / 2;
+    context.rect(0, 0, reveal, height);
+    context.rect(width - reveal, 0, reveal, height);
+  } else if (type === 'diagonal') {
+    const edge = (width + height) * p;
+    context.moveTo(0, 0);
+    context.lineTo(Math.min(width, edge), 0);
+    context.lineTo(Math.max(0, edge - height), height);
+    context.lineTo(0, height);
+    context.closePath();
+  } else {
+    return false;
+  }
+  context.clip();
+  return true;
+}
+
 export function renderProjectFrame(
   context: CanvasRenderingContext2D,
   project: Project,
@@ -834,7 +978,7 @@ export function renderProjectFrame(
     const track = renderIndex
       ? renderIndex.tracksById.get(clip.trackId)
       : project.tracks.find((item) => item.id === clip.trackId);
-    if (!track || (track.kind !== 'video' && track.kind !== 'text')) return false;
+    if (!track || (track.kind !== 'video' && track.kind !== 'overlay' && track.kind !== 'text')) return false;
     return track.visible !== false && time >= clip.timelineStart && time < clip.timelineStart + getClipDuration(clip);
   });
 
@@ -927,31 +1071,18 @@ export function renderProjectFrame(
           fromClip.sourceIn + Math.max(0, time - fromClip.timelineStart) * fromClip.speed,
         ));
         const progress = entering ? transitionProgress : 1 - transitionProgress;
-        const alpha = transition.type === 'fade' || transition.type === 'cross-dissolve' || transition.type === 'fade-through-black'
+        const alpha = ['fade', 'cross-dissolve', 'fade-through-black', 'blur-dissolve'].includes(transition.type)
           ? progress
           : 1;
         const scaleMultiplier = transition.type === 'zoom'
-          ? entering ? .82 + .18 * progress : 1 - .18 * progress
-          : 1;
-        if (transition.type === 'wipe') {
-          context.save();
-          context.beginPath();
-          if (entering) {
-            if (direction === 'left') context.rect(project.width * (1 - progress), 0, project.width * progress, project.height);
-            else if (direction === 'right') context.rect(0, 0, project.width * progress, project.height);
-            else if (direction === 'up') context.rect(0, 0, project.width, project.height * progress);
-            else context.rect(0, project.height * (1 - progress), project.width, project.height * progress);
-          } else if (direction === 'left') {
-            context.rect(project.width * progress, 0, project.width * (1 - progress), project.height);
-          } else if (direction === 'right') {
-            context.rect(0, 0, project.width * (1 - progress), project.height);
-          } else if (direction === 'up') {
-            context.rect(0, project.height * progress, project.width, project.height * (1 - progress));
-          } else {
-            context.rect(0, 0, project.width, project.height * (1 - progress));
-          }
-          context.clip();
-        }
+          ? .82 + .18 * progress
+          : transition.type === 'zoom-in'
+            ? .55 + .45 * progress
+            : transition.type === 'zoom-out'
+              ? 1.45 - .45 * progress
+              : 1;
+        context.save();
+        applyTransitionMask(context, transition.type, progress, direction, project.width, project.height);
         drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
           sampleTime,
           fade: false,
@@ -959,12 +1090,19 @@ export function renderProjectFrame(
           offsetX: transition.type === 'slide' ? directionX * project.width * (entering ? 1 - progress : progress) : 0,
           offsetY: transition.type === 'slide' ? directionY * project.height * (entering ? 1 - progress : progress) : 0,
           scaleMultiplier,
+          transitionBlur: transition.type === 'blur-dissolve' ? project.width * .016 * (1 - progress) : 0,
         });
-        if (transition.type === 'wipe') context.restore();
+        context.restore();
         if (transition.type === 'fade-through-black') {
           context.save();
           context.globalAlpha = 1 - progress;
           context.fillStyle = '#000';
+          context.fillRect(0, 0, project.width, project.height);
+          context.restore();
+        } else if (transition.type === 'flash') {
+          context.save();
+          context.globalAlpha = Math.sin(progress * Math.PI) * .9;
+          context.fillStyle = '#fff';
           context.fillRect(0, 0, project.width, project.height);
           context.restore();
         }
@@ -972,39 +1110,68 @@ export function renderProjectFrame(
         continue;
       }
       const progress = transitionProgress;
-      const fromSample = Math.min(fromClip.sourceOut, fromClip.sourceIn + Math.max(0, anchor - fromClip.timelineStart) * fromClip.speed);
-      const toSample = Math.max(toClip.sourceIn, toClip.sourceIn + Math.max(0, time - anchor) * toClip.speed);
+      const fromSample = Math.max(fromClip.sourceIn, Math.min(
+        fromClip.sourceOut,
+        fromClip.sourceIn + Math.max(0, time - fromClip.timelineStart) * fromClip.speed,
+      ));
+      const toSample = Math.max(toClip.sourceIn, Math.min(
+        toClip.sourceOut,
+        toClip.sourceIn + Math.max(0, time - toClip.timelineStart) * toClip.speed,
+      ));
       const direction = getTransitionDirection(transition);
       const directionX = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
       const directionY = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
-      if (transition.type === 'wipe' || transition.type === 'slide') {
-        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, fade: false });
+      if (transition.type === 'slide' || transition.type === 'push') {
+        const movingBoth = transition.type === 'push';
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
+          sampleTime: fromSample,
+          fade: false,
+          offsetX: movingBoth ? -directionX * project.width * progress : 0,
+          offsetY: movingBoth ? -directionY * project.height * progress : 0,
+        });
         context.save();
-        if (transition.type === 'wipe') {
-          context.beginPath();
-          if (direction === 'left') context.rect(project.width * (1 - progress), 0, project.width * progress, project.height);
-          else if (direction === 'right') context.rect(0, 0, project.width * progress, project.height);
-          else if (direction === 'up') context.rect(0, 0, project.width, project.height * progress);
-          else context.rect(0, project.height * (1 - progress), project.width, project.height * progress);
-          context.clip();
-        } else {
-          context.beginPath();
-          context.rect(0, 0, project.width, project.height);
-          context.clip();
-        }
         drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
           sampleTime: toSample,
           fade: false,
-          offsetX: transition.type === 'slide' ? directionX * project.width * (1 - progress) : 0,
-          offsetY: transition.type === 'slide' ? directionY * project.height * (1 - progress) : 0,
+          offsetX: directionX * project.width * (1 - progress),
+          offsetY: directionY * project.height * (1 - progress),
         });
         context.restore();
-      } else if (transition.type === 'zoom') {
-        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
-        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, scaleMultiplier: .82 + .18 * progress, fade: false });
+      } else if (transition.type === 'zoom' || transition.type === 'zoom-in' || transition.type === 'zoom-out' ||
+        transition.type === 'blur-dissolve' || transition.type === 'flash') {
+        const enteringScale = transition.type === 'zoom-in' ? .55 + .45 * progress
+          : transition.type === 'zoom-out' ? 1.45 - .45 * progress
+            : .82 + .18 * progress;
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, {
+          sampleTime: fromSample,
+          alpha: 1 - progress,
+          fade: false,
+          transitionBlur: transition.type === 'blur-dissolve' ? project.width * .016 * progress : 0,
+        });
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
+          sampleTime: toSample,
+          alpha: progress,
+          scaleMultiplier: enteringScale,
+          fade: false,
+          transitionBlur: transition.type === 'blur-dissolve' ? project.width * .016 * (1 - progress) : 0,
+        });
+        if (transition.type === 'flash') {
+          context.save();
+          context.globalAlpha = Math.max(0, 1 - Math.abs(progress * 2 - 1)) * .9;
+          context.fillStyle = '#fff';
+          context.fillRect(0, 0, project.width, project.height);
+          context.restore();
+        }
       } else {
-        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, alpha: 1 - progress, fade: false });
-        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, { sampleTime: toSample, alpha: progress, fade: false });
+        drawMedia(context, withTimelineFilterEffects(project, fromClip, time), fromAsset, fromSource, time, project, playing, { sampleTime: fromSample, fade: false });
+        context.save();
+        applyTransitionMask(context, transition.type, progress, direction, project.width, project.height);
+        drawMedia(context, withTimelineFilterEffects(project, toClip, time), toAsset, toSource, time, project, playing, {
+          sampleTime: toSample,
+          alpha: transition.type === 'fade' || transition.type === 'cross-dissolve' ? progress : 1,
+          fade: false,
+        });
+        context.restore();
         if (transition.type === 'fade-through-black') {
           context.save();
           context.globalAlpha = Math.max(0, 1 - Math.abs(progress * 2 - 1));

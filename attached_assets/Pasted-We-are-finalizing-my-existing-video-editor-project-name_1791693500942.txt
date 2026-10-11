@@ -1,0 +1,43 @@
+We are finalizing my existing video editor project named **Cutline**. First inspect the entire existing codebase and preserve all working features. Do not rebuild the editor from scratch.
+
+I want two deliverables:
+
+**1. Windows desktop application**
+- Convert the existing React/Vite video editor into a real Windows desktop application using Electron.
+- Keep the existing dark and golden UI and all working editing features.
+- Ensure video preview, playback audio, timeline, text overlays, filters, transitions, project folders, autosave, export, and Supabase cloud projects work correctly.
+- Store local projects and settings in an appropriate persistent Windows user-data directory.
+- Handle file permissions, media file paths, app startup, errors, and reopening saved projects correctly.
+- Do not expose Supabase secrets in the packaged application. Use only the intended public client configuration.
+- Do not claim features work unless they have been tested.
+
+**2. Professional Windows installer**
+Create a proper Windows installer using electron-builder or an equivalent reliable tool.
+The installation wizard should include:
+- Cutline name, logo, and version.
+- Welcome screen.
+- License agreement only if a real license file is provided.
+- Installation location selection.
+- Start Menu shortcut.
+- Optional desktop shortcut.
+- Installation progress screen.
+- Finish screen with an option to launch Cutline.
+- Correct uninstall support through Windows Settings.
+- Appropriate app icon and metadata.
+- A clean, professional installer experience.
+
+**3. Build and testing**
+- Configure production builds and scripts.
+- Generate a distributable Windows x64 installer, preferably an `.exe` setup file.
+- Test the packaged app, not just the development server.
+- Verify installation, launch, editing, saving, reopening projects, media imports, playback, export, and uninstall.
+- Fix build errors and report any untested functionality honestly.
+- If the current Replit environment cannot build Windows installers, provide the exact project files and documented steps to build the installer on a Windows PC. Do not provide a fake or empty installer.
+
+**4. Separate download website**
+Create a separate, responsive landing website for Cutline in a new folder named `cutline-website`, without breaking the existing editor.
+Use a premium dark theme with golden accents, the Cutline logo, feature sections, screenshots, system requirements, version information, and a prominent “Download for Windows” button.
+Keep the website deployment separate from the desktop app. Configure the download button to use a clearly documented installer download URL, which can be connected after the installer is actually built and hosted.
+Prepare the website for free static hosting such as Cloudflare Pages.
+
+Before making major changes, inspect the existing project structure and explain the implementation plan. Preserve the existing project and do not delete working code.
