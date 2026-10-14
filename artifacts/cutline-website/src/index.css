@@ -100,6 +100,8 @@ h1 em, h2 em { font-family: var(--app-font-serif); font-weight: 500; letter-spac
 .hero-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 17px; }
 .download-link { min-height: 53px; padding: 0 18px; background: #eab846; color: #20232a; border-radius: 3px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 14px; font-size: 13px; font-weight: 800; transition: transform .2s ease, background .2s ease, box-shadow .2s ease; }
 .download-link:hover { background: #f2c85c; transform: translateY(-2px); box-shadow: 0 9px 22px rgba(145,102,21,.18); }
+.download-link[aria-disabled="true"] { cursor: not-allowed; opacity: .72; }
+.download-link[aria-disabled="true"]:hover { background: #eab846; transform: none; box-shadow: none; }
 .hero-version { font-size: 9px; letter-spacing: .035em; color: #74746d; }
 .not-hosted { display: flex; align-items: flex-start; gap: 9px; max-width: 425px; color: #7f5b21; font-size: 11px; line-height: 1.65; margin: 15px 0 21px; }
 .not-hosted > span { border: 1px solid #ba8c35; border-radius: 50%; min-width: 14px; height: 14px; text-align: center; line-height: 12px; font-size: 9px; font-weight: 700; }

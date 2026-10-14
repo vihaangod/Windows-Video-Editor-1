@@ -1,9 +1,24 @@
 import { ArrowDown, ArrowRight, AudioLines, Check, Cloud, Download, Film, HardDrive, Layers3, LockKeyhole, Monitor, MousePointer2, Play, Sparkles, Type, WandSparkles, Waves } from 'lucide-react';
 import cutlineLogo from '../../cutline-editor/src/assets/cutline-app-icon.svg';
 
-const CUTLINE_DOWNLOAD_URL =
-  import.meta.env.VITE_CUTLINE_DOWNLOAD_URL ||
-  'https://downloads.example.com/cutline/Cutline-1.0.0-Setup.exe';
+const CUTLINE_DOWNLOAD_URL = (() => {
+  const configuredUrl = import.meta.env.VITE_CUTLINE_DOWNLOAD_URL?.trim();
+  if (!configuredUrl) return '';
+
+  try {
+    const url = new URL(configuredUrl);
+    const isDirectReleaseAsset =
+      url.protocol === 'https:' &&
+      url.hostname === 'github.com' &&
+      /\/releases\/download\/[^/]+\/Cutline-1\.0\.0-Setup\.exe$/i.test(
+        url.pathname,
+      );
+
+    return isDirectReleaseAsset ? url.toString() : '';
+  } catch {
+    return '';
+  }
+})();
 const PUBLIC_ASSET_BASE = import.meta.env.BASE_URL;
 
 const highlights = [
@@ -15,7 +30,15 @@ const highlights = [
 
 function DownloadLink({ className = '' }: { className?: string }) {
   return (
-    <a className={`download-link focus-ring ${className}`} href={CUTLINE_DOWNLOAD_URL} aria-describedby="download-status">
+    <a
+      className={`download-link focus-ring ${className}`}
+      href={CUTLINE_DOWNLOAD_URL || undefined}
+      download={CUTLINE_DOWNLOAD_URL ? 'Cutline-1.0.0-Setup.exe' : undefined}
+      role={CUTLINE_DOWNLOAD_URL ? undefined : 'link'}
+      aria-disabled={!CUTLINE_DOWNLOAD_URL}
+      aria-describedby={!CUTLINE_DOWNLOAD_URL ? 'download-status' : undefined}
+      tabIndex={CUTLINE_DOWNLOAD_URL ? undefined : -1}
+    >
       <Download size={18} strokeWidth={2.2} />
       <span>Download for Windows</span>
       <ArrowRight size={17} />
@@ -51,7 +74,11 @@ function App() {
               <DownloadLink />
               <span className="hero-version mono">VERSION 1.0.0&nbsp; / &nbsp;WINDOWS X64</span>
             </div>
-            <p className="not-hosted" id="download-status"><span aria-hidden="true">i</span> The installer is not hosted yet. This download link is a placeholder until a release is published.</p>
+            {!CUTLINE_DOWNLOAD_URL && (
+              <p className="not-hosted" id="download-status">
+                <span aria-hidden="true">i</span> The installer is not available yet. The download will be enabled after a public GitHub Release asset is configured.
+              </p>
+            )}
             <div className="hero-trust"><LockKeyhole size={14} /> Local media. Optional project-state sync.</div>
           </div>
           <div className="hero-art" aria-label="Cutline editor interface preview">
@@ -116,7 +143,11 @@ function App() {
               <h2>Make something<br /><em>worth keeping.</em></h2>
               <p>Cutline 1.0.0 is built for Windows x64. Give it a home on your PC and bring the footage you want to work with.</p>
               <DownloadLink className="download-large" />
-              <p className="not-hosted download-warning"><span aria-hidden="true">i</span> The installer is not hosted yet. The button uses a configurable placeholder URL until the release is available.</p>
+              {!CUTLINE_DOWNLOAD_URL && (
+                <p className="not-hosted download-warning">
+                  <span aria-hidden="true">i</span> The download will be enabled once the real public installer URL is configured.
+                </p>
+              )}
             </div>
             <div className="download-spec">
               <div className="spec-header"><span className="mono">CUTLINE / 1.0.0</span><span className="spec-mark"><Check size={15} /> FOR WINDOWS</span></div>
@@ -137,7 +168,7 @@ function App() {
             <div className="faq-list">
               <article><h3>Where do my video and audio files go?</h3><p>Your media stays on your PC. Optional Supabase sync applies to project state, not the actual video or audio files.</p></article>
               <article><h3>What does Cutline do?</h3><p>It’s a desktop video editor with a multitrack timeline, preview and editing for video and audio, titles and text overlays, filters, transitions, markup, local project and media storage, and exports.</p></article>
-              <article><h3>Can I download the installer today?</h3><p>Not yet. The installer is not hosted. The download URL is intentionally configurable so a release link can be added without changing the page design.</p></article>
+              <article><h3>Can I download the installer today?</h3><p>The download button is enabled only when a direct public GitHub Release asset URL for the installer is configured.</p></article>
             </div>
           </div>
         </section>
